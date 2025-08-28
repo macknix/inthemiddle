@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Google Maps Test</title>
+    <style>
+        #map {
+            height: 400px;
+            width: 100%;
+        }
+    </style>
+</head>
+<body>
+    <h1>Google Maps API Test</h1>
+    <div id="map"></div>
+    
+    <script>
+        function initMap() {
+            console.log('initMap called');
+            const map = new google.maps.Map(document.getElementById('map'), {
+                zoom: 8,
+                center: { lat: 40.7128, lng: -74.0060 } // NYC
+            });
+            
+            new google.maps.Marker({
+                position: { lat: 40.7128, lng: -74.0060 },
+                map: map,
+                title: 'Test Marker'
+            });
+            
+            console.log('Map initialized successfully');
+        }
+        
+        function handleError() {
+            console.error('Google Maps failed to load');
+            document.getElementById('map').innerHTML = '<p style="color: red; padding: 20px;">Google Maps failed to load. Check API key and console for errors.</p>';
+        }
+    </script>
+    
+    <script async defer 
+        src="https://maps.googleapis.com/maps/api/js?key=AIzaSyA86DvKgj54RDVXG9HzGB22Wl7DG1cYH6I&callback=initMap"
+        onerror="handleError()">
+    </script>
+</body>
+</html>

@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Meet in the Middle - Test Interface</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            opacity: 0.9;
+            font-size: 1.1em;
+        }
+        
+        .form-section {
+            padding: 40px;
+        }
+        
+        .input-group {
+            margin-bottom: 25px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #555;
+        }
+        
+        input[type="text"], input[type="number"] {
+            width: 100%;
+            padding: 15px;
+            border: 2px solid #e1e5e9;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s ease;
+        }
+        
+        input[type="text"]:focus, input[type="number"]:focus {
+            outline: none;
+            border-color: #4facfe;
+        }
+        
+        .search-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            font-size: 18px;
+            border-radius: 8px;
+            cursor: pointer;
+            width: 100%;
+            transition: transform 0.2s ease;
+        }
+        
+        .search-btn:hover {
+            transform: translateY(-2px);
+        }
+        
+        .search-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+        
+        .results {
+            margin-top: 30px;
+            padding: 25px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+        
+        .error {
+            background: #ffe6e6;
+            color: #d00;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+        }
+        
+        .success {
+            background: #e6ffe6;
+            color: #0a5d0a;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+        }
+        
+        .meeting-point {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 15px 0;
+            border-left: 4px solid #4facfe;
+        }
+        
+        .meeting-point h3 {
+            color: #4facfe;
+            margin-bottom: 10px;
+        }
+        
+        .travel-times {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin: 15px 0;
+        }
+        
+        .travel-time {
+            background: #f0f7ff;
+            padding: 15px;
+            border-radius: 6px;
+            text-align: center;
+        }
+        
+        .alternatives {
+            margin-top: 20px;
+        }
+        
+        .alternative {
+            background: white;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 6px;
+            border: 1px solid #e1e5e9;
+        }
+        
+        .api-status {
+            text-align: center;
+            padding: 10px;
+            margin-bottom: 20px;
+            border-radius: 6px;
+        }
+        
+        .status-ok {
+            background: #e6ffe6;
+            color: #0a5d0a;
+        }
+        
+        .status-error {
+            background: #ffe6e6;
+            color: #d00;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🗺️ Meet in the Middle</h1>
+            <p>Find the perfect meeting spot by public transport time</p>
+        </div>
+        
+        <div class="form-section">
+            <div id="apiStatus" class="api-status"></div>
+            
+            <form id="searchForm">
+                <div class="input-group">
+                    <label for="address1">📍 First Address</label>
+                    <input type="text" id="address1" placeholder="e.g., Times Square, New York, NY" required>
+                </div>
+                
+                <div class="input-group">
+                    <label for="address2">📍 Second Address</label>
+                    <input type="text" id="address2" placeholder="e.g., Central Park, New York, NY" required>
+                </div>
+                
+                <div class="input-group">
+                    <label for="radius">🔍 Search Radius (meters)</label>
+                    <input type="number" id="radius" value="2000" min="100" max="10000">
+                </div>
+                
+                <button type="submit" class="search-btn" id="searchBtn">
+                    🚇 Find Meeting Point
+                </button>
+            </form>
+            
+            <div id="loading" class="loading" style="display: none;">
+                🔍 Searching for the perfect meeting spot...
+            </div>
+            
+            <div id="results"></div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:5000';
+        
+        // Check API status on load
+        async function checkApiStatus() {
+            const statusDiv = document.getElementById('apiStatus');
+            try {
+                const response = await fetch(`${API_BASE}/`);
+                if (response.ok) {
+                    statusDiv.className = 'api-status status-ok';
+                    statusDiv.textContent = '✅ API Server Running';
+                } else {
+                    throw new Error('API not responding');
+                }
+            } catch (error) {
+                statusDiv.className = 'api-status status-error';
+                statusDiv.textContent = '❌ API Server Not Running - Start with: python app.py';
+            }
+        }
+        
+        // Format time in minutes
+        function formatTime(seconds) {
+            const minutes = Math.round(seconds / 60);
+            return `${minutes} minute${minutes !== 1 ? 's' : ''}`;
+        }
+        
+        // Display results
+        function displayResults(data) {
+            const resultsDiv = document.getElementById('results');
+            
+            if (data.optimal_meeting_point) {
+                const optimal = data.optimal_meeting_point;
+                resultsDiv.innerHTML = `
+                    <div class="success">
+                        ✅ Found optimal meeting point!
+                    </div>
+                    
+                    <div class="meeting-point">
+                        <h3>🎯 ${optimal.name}</h3>
+                        <p><strong>📍 Address:</strong> ${optimal.formatted_address}</p>
+                        ${optimal.rating ? `<p><strong>⭐ Rating:</strong> ${optimal.rating}/5</p>` : ''}
+                        
+                        <div class="travel-times">
+                            <div class="travel-time">
+                                <strong>From Address 1</strong><br>
+                                🚇 ${formatTime(optimal.time_from_address1)}
+                            </div>
+                            <div class="travel-time">
+                                <strong>From Address 2</strong><br>
+                                🚇 ${formatTime(optimal.time_from_address2)}
+                            </div>
+                        </div>
+                        
+                        <p><strong>⚖️ Time Difference:</strong> ${optimal.time_difference_minutes} minutes</p>
+                    </div>
+                    
+                    ${data.nearby_alternatives && data.nearby_alternatives.length > 0 ? `
+                        <div class="alternatives">
+                            <h3>🔄 Alternative Options</h3>
+                            ${data.nearby_alternatives.slice(0, 3).map(alt => `
+                                <div class="alternative">
+                                    <strong>${alt.name}</strong><br>
+                                    📍 ${alt.formatted_address || 'Address not available'}
+                                    ${alt.rating ? `<br>⭐ ${alt.rating}/5` : ''}
+                                </div>
+                            `).join('')}
+                        </div>
+                    ` : ''}
+                `;
+            } else {
+                resultsDiv.innerHTML = `
+                    <div class="error">
+                        ❌ No optimal meeting point found. Try:
+                        <ul style="margin-top: 10px; margin-left: 20px;">
+                            <li>Increasing the search radius</li>
+                            <li>Using more specific addresses</li>
+                            <li>Checking if public transport is available between these locations</li>
+                        </ul>
+                    </div>
+                `;
+            }
+        }
+        
+        // Handle form submission
+        document.getElementById('searchForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const address1 = document.getElementById('address1').value.trim();
+            const address2 = document.getElementById('address2').value.trim();
+            const radius = parseInt(document.getElementById('radius').value);
+            
+            if (!address1 || !address2) {
+                alert('Please enter both addresses');
+                return;
+            }
+            
+            const loadingDiv = document.getElementById('loading');
+            const resultsDiv = document.getElementById('results');
+            const searchBtn = document.getElementById('searchBtn');
+            
+            // Show loading state
+            loadingDiv.style.display = 'block';
+            resultsDiv.innerHTML = '';
+            searchBtn.disabled = true;
+            searchBtn.textContent = '🔍 Searching...';
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/find-middle-point`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        address1: address1,
+                        address2: address2,
+                        search_radius: radius
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok && result.success) {
+                    displayResults(result.data);
+                } else {
+                    resultsDiv.innerHTML = `
+                        <div class="error">
+                            ❌ Error: ${result.error || 'Unknown error occurred'}
+                        </div>
+                    `;
+                }
+                
+            } catch (error) {
+                resultsDiv.innerHTML = `
+                    <div class="error">
+                        ❌ Network error: ${error.message}
+                        <br><br>Make sure the API server is running and your Google Maps API key is configured.
+                    </div>
+                `;
+            } finally {
+                loadingDiv.style.display = 'none';
+                searchBtn.disabled = false;
+                searchBtn.textContent = '🚇 Find Meeting Point';
+            }
+        });
+        
+        // Check API status when page loads
+        checkApiStatus();
+    </script>
+</body>
+</html>

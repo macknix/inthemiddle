@@ -1,0 +1,1014 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Meet in the Middle - Interactive Map</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: #f5f5f5;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            text-align: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .header h1 {
+            font-size: 2.2em;
+            margin-bottom: 5px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+            display: grid;
+            grid-template-columns: 350px 1fr;
+            gap: 20px;
+            height: calc(100vh - 120px);
+        }
+        
+        .sidebar {
+            background: white;
+            padding: 25px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            overflow-y: auto;
+        }
+        
+        .input-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #555;
+        }
+        
+        input[type="text"], input[type="number"] {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e1e5e9;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s ease;
+        }
+        
+        input[type="text"]:focus, input[type="number"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .search-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            font-size: 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            width: 100%;
+            transition: transform 0.2s ease;
+            margin-bottom: 20px;
+        }
+        
+        .search-btn:hover {
+            transform: translateY(-2px);
+        }
+        
+        .search-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .map-container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            overflow: hidden;
+            display: grid;
+            grid-template-rows: auto 1fr;
+        }
+        
+        .map-header {
+            background: #f8f9fa;
+            padding: 15px 20px;
+            border-bottom: 1px solid #e1e5e9;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .map-tabs {
+            display: flex;
+            gap: 10px;
+        }
+        
+        .tab-btn {
+            background: #e9ecef;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.3s ease;
+        }
+        
+        .tab-btn.active {
+            background: #667eea;
+            color: white;
+        }
+        
+        .maps-container {
+            height: 100%;
+            display: grid;
+        }
+        
+        .single-map {
+            grid-template-columns: 1fr;
+        }
+        
+        .split-map {
+            grid-template-columns: 1fr 1fr;
+            gap: 1px;
+            background: #e1e5e9;
+        }
+        
+        #map, #mapRoute1, #mapRoute2 {
+            height: 100%;
+            width: 100%;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+        
+        .results {
+            margin-top: 20px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+        
+        .result-item {
+            background: white;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 6px;
+            border-left: 4px solid #667eea;
+        }
+        
+        .error {
+            background: #ffe6e6;
+            color: #d00;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 10px;
+        }
+        
+        .legend {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 15px;
+            border: 1px solid #e1e5e9;
+        }
+        
+        .legend h4 {
+            margin-bottom: 10px;
+            color: #555;
+        }
+        
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin: 8px 0;
+            font-size: 14px;
+        }
+        
+        .legend-color {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            margin-right: 10px;
+            border: 2px solid white;
+            box-shadow: 0 0 3px rgba(0,0,0,0.3);
+        }
+        
+        .status-indicator {
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            margin-bottom: 15px;
+        }
+        
+        .status-ok {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .status-error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        
+        .route-info {
+            background: white;
+            padding: 12px;
+            margin: 8px 0;
+            border-radius: 6px;
+            border: 1px solid #e1e5e9;
+            font-size: 13px;
+        }
+        
+        .route-info strong {
+            color: #667eea;
+        }
+        
+        .business-filters {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-top: 15px;
+            border: 1px solid #e1e5e9;
+        }
+        
+        .business-filters h4 {
+            margin-bottom: 15px;
+            color: #555;
+        }
+        
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-bottom: 15px;
+        }
+        
+        .filter-checkbox {
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            font-size: 14px;
+            padding: 5px;
+            border-radius: 4px;
+            transition: background 0.2s ease;
+        }
+        
+        .filter-checkbox:hover {
+            background: #f8f9fa;
+        }
+        
+        .filter-checkbox input {
+            margin-right: 8px;
+            cursor: pointer;
+        }
+        
+        .filter-apply-btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            width: 100%;
+        }
+        
+        .filter-apply-btn:hover {
+            background: #5a6fd8;
+        }
+        
+        .business-count {
+            background: #e3f2fd;
+            padding: 10px;
+            border-radius: 6px;
+            margin: 10px 0;
+            font-size: 14px;
+            text-align: center;
+        }
+        
+        @media (max-width: 1200px) {
+            .container {
+                grid-template-columns: 1fr;
+                grid-template-rows: auto 1fr;
+            }
+            
+            .sidebar {
+                height: auto;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🗺️ Meet in the Middle</h1>
+        <p>Interactive map with heat zones and travel routes</p>
+    </div>
+    
+    <div class="container">
+        <div class="sidebar">
+            <div id="status" class="status-indicator"></div>
+            
+            <form id="searchForm">
+                <div class="input-group">
+                    <label for="address1">📍 First Address</label>
+                    <input type="text" id="address1" placeholder="e.g., Times Square, New York, NY" required>
+                </div>
+                
+                <div class="input-group">
+                    <label for="address2">📍 Second Address</label>
+                    <input type="text" id="address2" placeholder="e.g., Central Park, New York, NY" required>
+                </div>
+                
+                <button type="submit" class="search-btn" id="searchBtn">
+                    🚇 Find Meeting Point
+                </button>
+            </form>
+            
+            <div class="legend">
+                <h4>🗺️ Map Legend</h4>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #4285f4;"></div>
+                    <span>Address A (Start Point)</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #ea4335;"></div>
+                    <span>Address B (Start Point)</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #34a853;"></div>
+                    <span>★ Optimal Meeting Point</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: rgba(76, 175, 80, 0.3); border: 2px solid #4caf50;"></div>
+                    <span>5 min walk radius</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: rgba(255, 193, 7, 0.3); border: 2px solid #ffc107;"></div>
+                    <span>10 min walk radius</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: rgba(244, 67, 54, 0.3); border: 2px solid #f44336;"></div>
+                    <span>15 min walk radius</span>
+                </div>
+            </div>
+            
+            <div class="business-filters" id="businessFilters" style="display: none;">
+                <h4>🏪 Business Filters</h4>
+                <div class="filter-group">
+                    <label class="filter-checkbox">
+                        <input type="checkbox" value="restaurant" checked> 🍽️ Restaurants
+                    </label>
+                    <label class="filter-checkbox">
+                        <input type="checkbox" value="cafe" checked> ☕ Cafes
+                    </label>
+                    <label class="filter-checkbox">
+                        <input type="checkbox" value="bar" checked> 🍺 Bars
+                    </label>
+                    <label class="filter-checkbox">
+                        <input type="checkbox" value="shopping_mall" checked> 🛍️ Shopping
+                    </label>
+                    <label class="filter-checkbox">
+                        <input type="checkbox" value="store" checked> 🏪 Stores
+                    </label>
+                    <label class="filter-checkbox">
+                        <input type="checkbox" value="park" checked> 🌳 Parks
+                    </label>
+                    <label class="filter-checkbox">
+                        <input type="checkbox" value="tourist_attraction" checked> 🎯 Attractions
+                    </label>
+                    <label class="filter-checkbox">
+                        <input type="checkbox" value="gym" checked> 💪 Gyms
+                    </label>
+                    <label class="filter-checkbox">
+                        <input type="checkbox" value="library" checked> 📚 Libraries
+                    </label>
+                </div>
+                <button class="filter-apply-btn" onclick="applyFilters()">Apply Filters</button>
+                <div class="business-count" style="margin-top: 10px; font-size: 12px; color: #666; text-align: center;">
+                    No businesses displayed
+                </div>
+            </div>
+            
+            <div id="loading" class="loading" style="display: none;">
+                🔍 Finding optimal meeting point and calculating routes...
+            </div>
+            
+            <div id="results"></div>
+        </div>
+        
+        <div class="map-container">
+            <div class="map-header">
+                <h3>Interactive Map</h3>
+                <div class="map-tabs">
+                    <button class="tab-btn active" id="overviewTab">Overview</button>
+                    <button class="tab-btn" id="routesTab">Travel Routes</button>
+                </div>
+            </div>
+            
+            <div class="maps-container single-map" id="mapsContainer">
+                <div id="map"></div>
+                <div id="mapRoute1" style="display: none;"></div>
+                <div id="mapRoute2" style="display: none;"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:5000';
+        let map, map1, map2;
+        let directionsService, directionsRenderer1, directionsRenderer2;
+        let currentData = null;
+        let markers = [];
+        let businessMarkers = [];
+        let openInfoWindows = [];
+        let walkingCircles = [];
+        let categorizedBusinesses = {};
+        
+        // Business type icons mapping
+        const businessIcons = {
+            restaurant: '🍽️',
+            cafe: '☕',
+            bar: '🍺',
+            shopping_mall: '🛍️',
+            park: '🌳',
+            tourist_attraction: '🏛️',
+            gym: '💪',
+            library: '📚'
+        };
+        
+        // Initialize maps when Google Maps API is loaded
+        function initMaps() {
+            // Main overview map
+            map = new google.maps.Map(document.getElementById('map'), {
+                zoom: 13,
+                center: { lat: 40.7128, lng: -74.0060 }, // Default to NYC
+                mapTypeId: 'roadmap'
+            });
+            
+            // Route maps
+            map1 = new google.maps.Map(document.getElementById('mapRoute1'), {
+                zoom: 13,
+                center: { lat: 40.7128, lng: -74.0060 },
+                mapTypeId: 'roadmap'
+            });
+            
+            map2 = new google.maps.Map(document.getElementById('mapRoute2'), {
+                zoom: 13,
+                center: { lat: 40.7128, lng: -74.0060 },
+                mapTypeId: 'roadmap'
+            });
+            
+            // Initialize directions service
+            directionsService = new google.maps.DirectionsService();
+            directionsRenderer1 = new google.maps.DirectionsRenderer({
+                map: map1,
+                polylineOptions: {
+                    strokeColor: '#4285f4',
+                    strokeWeight: 6
+                }
+            });
+            directionsRenderer2 = new google.maps.DirectionsRenderer({
+                map: map2,
+                polylineOptions: {
+                    strokeColor: '#ea4335',
+                    strokeWeight: 6
+                }
+            });
+            
+            checkApiStatus();
+        }
+        
+        // Check API status
+        async function checkApiStatus() {
+            const statusDiv = document.getElementById('status');
+            try {
+                const response = await fetch(`${API_BASE}/`);
+                if (response.ok) {
+                    statusDiv.className = 'status-indicator status-ok';
+                    statusDiv.textContent = '✅ API Server Connected';
+                } else {
+                    throw new Error('API not responding');
+                }
+            } catch (error) {
+                statusDiv.className = 'status-indicator status-error';
+                statusDiv.textContent = '❌ API Server Offline';
+            }
+        }
+        
+        // Clear all markers from map
+        function clearMarkers() {
+            markers.forEach(marker => marker.setMap(null));
+            markers = [];
+            clearBusinessMarkers();
+        }
+        
+        // Clear business markers specifically
+        function clearBusinessMarkers() {
+            businessMarkers.forEach(marker => marker.setMap(null));
+            businessMarkers = [];
+        }
+        
+        // Clear all info windows
+        function closeAllInfoWindows() {
+            openInfoWindows.forEach(infoWindow => {
+                infoWindow.close();
+            });
+            openInfoWindows = [];
+        }
+        
+        // Clear walking distance circles
+        function clearWalkingCircles() {
+            walkingCircles.forEach(circle => {
+                circle.setMap(null);
+            });
+            walkingCircles = [];
+        }
+        
+        // Create walking distance circles around a point
+        function createWalkingCircles(center) {
+            // Average walking speed is about 80 meters per minute
+            const walkingSpeed = 80; // meters per minute
+            
+            const circles = [
+                { time: 5, color: '#4caf50', radius: 5 * walkingSpeed },   // 5 min = ~400m
+                { time: 10, color: '#ffc107', radius: 10 * walkingSpeed }, // 10 min = ~800m
+                { time: 15, color: '#f44336', radius: 15 * walkingSpeed }  // 15 min = ~1200m
+            ];
+            
+            circles.forEach(circleConfig => {
+                const circle = new google.maps.Circle({
+                    strokeColor: circleConfig.color,
+                    strokeOpacity: 0.8,
+                    strokeWeight: 2,
+                    fillColor: circleConfig.color,
+                    fillOpacity: 0.15,
+                    map: map,
+                    center: center,
+                    radius: circleConfig.radius
+                });
+                
+                walkingCircles.push(circle);
+            });
+        }
+        
+        // Clear all routes from the route maps
+        function clearRoutes() {
+            if (directionsRenderer1) {
+                directionsRenderer1.setDirections({routes: []});
+            }
+            if (directionsRenderer2) {
+                directionsRenderer2.setDirections({routes: []});
+            }
+        }
+        
+        // Display results on map
+        function displayResultsOnMap(data) {
+            // Clear previous markers and info windows first
+            clearMarkers();
+            clearBusinessMarkers();
+            closeAllInfoWindows();
+            clearWalkingCircles();
+            
+            // Store business data for filtering
+            categorizedBusinesses = data.categorized_businesses || {};
+            
+            const address1 = data.address1.geocoded;
+            const address2 = data.address2.geocoded;
+            const midpoint = data.geographic_midpoint;
+            const optimal = data.optimal_meeting_point;
+            
+            // Center map on midpoint
+            const center = { lat: midpoint.lat, lng: midpoint.lng };
+            map.setCenter(center);
+            map.setZoom(14);
+            
+            // Add click listener to map to close info windows when clicking on empty space
+            map.addListener('click', () => {
+                closeAllInfoWindows();
+            });
+            
+            // Clear any existing markers
+            // Note: In a production app, you'd want to store and clear previous markers
+            
+            // Add markers for start points
+            const marker1 = new google.maps.Marker({
+                position: { lat: address1.lat, lng: address1.lng },
+                map: map,
+                title: `Address 1: ${address1.formatted_address}`,
+                icon: {
+                    url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
+                        <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">
+                            <circle cx="20" cy="20" r="18" fill="#4285f4" stroke="white" stroke-width="3"/>
+                            <text x="20" y="26" text-anchor="middle" fill="white" font-family="Arial" font-size="16" font-weight="bold">A</text>
+                        </svg>
+                    `),
+                    scaledSize: new google.maps.Size(40, 40)
+                }
+            });
+            markers.push(marker1);
+            
+            const marker2 = new google.maps.Marker({
+                position: { lat: address2.lat, lng: address2.lng },
+                map: map,
+                title: `Address 2: ${address2.formatted_address}`,
+                icon: {
+                    url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
+                        <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">
+                            <circle cx="20" cy="20" r="18" fill="#ea4335" stroke="white" stroke-width="3"/>
+                            <text x="20" y="26" text-anchor="middle" fill="white" font-family="Arial" font-size="16" font-weight="bold">B</text>
+                        </svg>
+                    `),
+                    scaledSize: new google.maps.Size(40, 40)
+                }
+            });
+            markers.push(marker2);
+            
+            // Add marker for optimal meeting point
+            if (optimal) {
+                const optimalMarker = new google.maps.Marker({
+                    position: { lat: optimal.lat, lng: optimal.lng },
+                    map: map,
+                    title: `Optimal Meeting Point: ${optimal.name}`,
+                    icon: {
+                        url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
+                            <svg xmlns="http://www.w3.org/2000/svg" width="50" height="50" viewBox="0 0 50 50">
+                                <circle cx="25" cy="25" r="22" fill="#34a853" stroke="white" stroke-width="4"/>
+                                <text x="25" y="31" text-anchor="middle" fill="white" font-family="Arial" font-size="20" font-weight="bold">★</text>
+                            </svg>
+                        `),
+                        scaledSize: new google.maps.Size(50, 50)
+                    }
+                });
+                markers.push(optimalMarker);
+                
+                // Create walking distance circles around the optimal meeting point
+                createWalkingCircles({ lat: optimal.lat, lng: optimal.lng });
+                
+                // Add info window for optimal point
+                const infoWindow = new google.maps.InfoWindow({
+                    content: `
+                        <div style="padding: 10px; max-width: 250px;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                <h4 style="margin: 0; color: #34a853;">🎯 ${optimal.name}</h4>
+                                <button onclick="closeAllInfoWindows()" style="background: none; border: none; font-size: 18px; cursor: pointer; color: #666;">×</button>
+                            </div>
+                            <p style="margin: 0 0 5px 0; font-size: 13px;"><strong>📍 Address:</strong> ${optimal.formatted_address}</p>
+                            ${optimal.rating ? `<p style="margin: 0 0 5px 0; font-size: 13px;"><strong>⭐ Rating:</strong> ${optimal.rating}/5</p>` : ''}
+                            <p style="margin: 0 0 5px 0; font-size: 13px;"><strong>🚇 From A:</strong> ${Math.round(optimal.time_from_address1/60)} min</p>
+                            <p style="margin: 0 0 5px 0; font-size: 13px;"><strong>🚇 From B:</strong> ${Math.round(optimal.time_from_address2/60)} min</p>
+                            <p style="margin: 0; font-size: 13px;"><strong>⚖️ Difference:</strong> ${optimal.time_difference_minutes} min</p>
+                        </div>
+                    `
+                });
+                openInfoWindows.push(infoWindow);
+                
+                optimalMarker.addListener('click', () => {
+                    closeAllInfoWindows();
+                    infoWindow.open(map, optimalMarker);
+                    openInfoWindows.push(infoWindow);
+                });
+            }
+            
+            // Show alternative meeting points as smaller markers
+            if (data.nearby_alternatives) {
+                data.nearby_alternatives.slice(0, 5).forEach((alt, index) => {
+                    if (alt.lat && alt.lng && alt.name !== optimal?.name) {
+                        const altMarker = new google.maps.Marker({
+                            position: { lat: alt.lat, lng: alt.lng },
+                            map: map,
+                            title: `Alternative: ${alt.name}`,
+                            icon: {
+                                url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 30 30">
+                                        <circle cx="15" cy="15" r="12" fill="#ffc107" stroke="white" stroke-width="2"/>
+                                        <text x="15" y="19" text-anchor="middle" fill="white" font-family="Arial" font-size="10" font-weight="bold">${index + 2}</text>
+                                    </svg>
+                                `),
+                                scaledSize: new google.maps.Size(30, 30)
+                            }
+                        });
+                        markers.push(altMarker);
+                        
+                        const altInfoWindow = new google.maps.InfoWindow({
+                            content: `
+                                <div style="padding: 8px; max-width: 200px;">
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+                                        <h5 style="margin: 0; color: #ffc107;">📍 ${alt.name}</h5>
+                                        <button onclick="closeAllInfoWindows()" style="background: none; border: none; font-size: 16px; cursor: pointer; color: #666;">×</button>
+                                    </div>
+                                    <p style="margin: 0; font-size: 12px;">${alt.formatted_address || 'Alternative meeting spot'}</p>
+                                    ${alt.rating ? `<p style="margin: 5px 0 0 0; font-size: 12px;">⭐ ${alt.rating}/5</p>` : ''}
+                                </div>
+                            `
+                        });
+                        openInfoWindows.push(altInfoWindow);
+                        
+                        altMarker.addListener('click', () => {
+                            closeAllInfoWindows();
+                            altInfoWindow.open(map, altMarker);
+                            openInfoWindows.push(altInfoWindow);
+                        });
+                    }
+                });
+            }
+            
+            // Display businesses within walking circles
+            displayBusinesses(categorizedBusinesses);
+        }
+        
+        // Display routes on separate maps
+        function displayRoutes(data) {
+            const address1 = data.address1.geocoded;
+            const address2 = data.address2.geocoded;
+            const optimal = data.optimal_meeting_point;
+            
+            if (!optimal) return;
+            
+            // Route from address 1 to meeting point
+            directionsService.route({
+                origin: { lat: address1.lat, lng: address1.lng },
+                destination: { lat: optimal.lat, lng: optimal.lng },
+                travelMode: google.maps.TravelMode.TRANSIT
+            }, (result, status) => {
+                if (status === 'OK') {
+                    directionsRenderer1.setDirections(result);
+                    
+                    // Add route info
+                    const route = result.routes[0];
+                    const leg = route.legs[0];
+                    updateRouteInfo('route1Info', {
+                        from: address1.formatted_address,
+                        to: optimal.name,
+                        duration: leg.duration.text,
+                        distance: leg.distance.text,
+                        steps: leg.steps.length
+                    });
+                }
+            });
+            
+            // Route from address 2 to meeting point
+            directionsService.route({
+                origin: { lat: address2.lat, lng: address2.lng },
+                destination: { lat: optimal.lat, lng: optimal.lng },
+                travelMode: google.maps.TravelMode.TRANSIT
+            }, (result, status) => {
+                if (status === 'OK') {
+                    directionsRenderer2.setDirections(result);
+                    
+                    // Add route info
+                    const route = result.routes[0];
+                    const leg = route.legs[0];
+                    updateRouteInfo('route2Info', {
+                        from: address2.formatted_address,
+                        to: optimal.name,
+                        duration: leg.duration.text,
+                        distance: leg.distance.text,
+                        steps: leg.steps.length
+                    });
+                }
+            });
+        }
+        
+        // Update route information
+        function updateRouteInfo(elementId, routeData) {
+            const existingElement = document.getElementById(elementId);
+            if (existingElement) {
+                existingElement.remove();
+            }
+            
+            const routeInfo = document.createElement('div');
+            routeInfo.id = elementId;
+            routeInfo.className = 'route-info';
+            routeInfo.innerHTML = `
+                <strong>📍 From:</strong> ${routeData.from.substring(0, 40)}...<br>
+                <strong>🎯 To:</strong> ${routeData.to}<br>
+                <strong>⏱️ Duration:</strong> ${routeData.duration}<br>
+                <strong>📏 Distance:</strong> ${routeData.distance}<br>
+                <strong>🚇 Transit Steps:</strong> ${routeData.steps}
+            `;
+            
+            document.getElementById('results').appendChild(routeInfo);
+        }
+        
+        // Display businesses on the map
+        function displayBusinesses(businesses) {
+            clearBusinessMarkers();
+            
+            if (!businesses) return;
+            
+            Object.entries(businesses).forEach(([category, places]) => {
+                const icon = businessIcons[category] || '📍';
+                const isVisible = isBusinessCategoryVisible(category);
+                
+                if (!isVisible) return;
+                
+                places.forEach((place, index) => {
+                    if (place.lat && place.lng) {
+                        const marker = new google.maps.Marker({
+                            position: { lat: place.lat, lng: place.lng },
+                            map: map,
+                            title: `${place.name} (${category})`,
+                            icon: {
+                                url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="25" height="25" viewBox="0 0 25 25">
+                                        <circle cx="12.5" cy="12.5" r="10" fill="#667eea" stroke="white" stroke-width="2"/>
+                                        <text x="12.5" y="16" text-anchor="middle" fill="white" font-family="Arial" font-size="8">${icon}</text>
+                                    </svg>
+                                `),
+                                scaledSize: new google.maps.Size(25, 25)
+                            }
+                        });
+                        
+                        businessMarkers.push(marker);
+                        
+                        const infoWindow = new google.maps.InfoWindow({
+                            content: `
+                                <div style="padding: 8px; max-width: 200px;">
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+                                        <h5 style="margin: 0; color: #667eea;">${icon} ${place.name}</h5>
+                                        <button onclick="closeAllInfoWindows()" style="background: none; border: none; font-size: 16px; cursor: pointer; color: #666;">×</button>
+                                    </div>
+                                    <p style="margin: 0 0 5px 0; font-size: 12px;"><strong>Category:</strong> ${category.replace('_', ' ')}</p>
+                                    <p style="margin: 0 0 5px 0; font-size: 12px;"><strong>Address:</strong> ${place.formatted_address || place.vicinity || 'N/A'}</p>
+                                    ${place.rating ? `<p style="margin: 0 0 5px 0; font-size: 12px;"><strong>Rating:</strong> ${place.rating}/5 ⭐</p>` : ''}
+                                    ${place.price_level ? `<p style="margin: 0; font-size: 12px;"><strong>Price:</strong> ${'$'.repeat(place.price_level)}</p>` : ''}
+                                </div>
+                            `
+                        });
+                        
+                        marker.addListener('click', () => {
+                            closeAllInfoWindows();
+                            infoWindow.open(map, marker);
+                            openInfoWindows.push(infoWindow);
+                        });
+                    }
+                });
+            });
+            
+            updateBusinessCount();
+        }
+        
+        // Check if a business category is currently visible based on filters
+        function isBusinessCategoryVisible(category) {
+            const checkbox = document.querySelector(`input[value="${category}"]`);
+            return checkbox ? checkbox.checked : true;
+        }
+        
+        // Update business count display
+        function updateBusinessCount() {
+            const totalBusinesses = businessMarkers.length;
+            const countElement = document.querySelector('.business-count');
+            if (countElement) {
+                countElement.textContent = `Showing ${totalBusinesses} businesses`;
+            }
+        }
+        
+        // Apply filters function called by the Apply Filters button
+        function applyFilters() {
+            if (categorizedBusinesses) {
+                displayBusinesses(categorizedBusinesses);
+            }
+        }
+        
+        // Tab switching
+        document.getElementById('overviewTab').addEventListener('click', () => {
+            document.getElementById('overviewTab').classList.add('active');
+            document.getElementById('routesTab').classList.remove('active');
+            
+            document.getElementById('mapsContainer').className = 'maps-container single-map';
+            document.getElementById('map').style.display = 'block';
+            document.getElementById('mapRoute1').style.display = 'none';
+            document.getElementById('mapRoute2').style.display = 'none';
+        });
+        
+        document.getElementById('routesTab').addEventListener('click', () => {
+            document.getElementById('routesTab').classList.add('active');
+            document.getElementById('overviewTab').classList.remove('active');
+            
+            document.getElementById('mapsContainer').className = 'maps-container split-map';
+            document.getElementById('map').style.display = 'none';
+            document.getElementById('mapRoute1').style.display = 'block';
+            document.getElementById('mapRoute2').style.display = 'block';
+            
+            // Trigger resize
+            setTimeout(() => {
+                google.maps.event.trigger(map1, 'resize');
+                google.maps.event.trigger(map2, 'resize');
+                if (currentData) {
+                    displayRoutes(currentData);
+                }
+            }, 100);
+        });
+        
+        // Form submission
+        document.getElementById('searchForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const address1 = document.getElementById('address1').value.trim();
+            const address2 = document.getElementById('address2').value.trim();
+            
+            if (!address1 || !address2) {
+                alert('Please enter both addresses');
+                return;
+            }
+            
+            const loadingDiv = document.getElementById('loading');
+            const resultsDiv = document.getElementById('results');
+            const searchBtn = document.getElementById('searchBtn');
+            
+            // Show loading state
+            loadingDiv.style.display = 'block';
+            resultsDiv.innerHTML = '';
+            searchBtn.disabled = true;
+            searchBtn.textContent = '🔍 Analyzing...';
+            
+            // Clear previous results
+            clearMarkers();
+            clearRoutes();
+            closeAllInfoWindows();
+            clearWalkingCircles();
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/find-middle-point`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        address1: address1,
+                        address2: address2,
+                        search_radius: 2000  // Fixed radius since we're not using the input anymore
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok && result.success) {
+                    currentData = result.data;
+                    displayResultsOnMap(result.data);
+                    
+                    const optimal = result.data.optimal_meeting_point;
+                    if (optimal) {
+                        resultsDiv.innerHTML = `
+                            <div class="result-item">
+                                <h4>🎯 Optimal Meeting Point</h4>
+                                <strong>${optimal.name}</strong><br>
+                                📍 ${optimal.formatted_address}<br>
+                                ${optimal.rating ? `⭐ ${optimal.rating}/5<br>` : ''}
+                                🚇 Travel times: ${Math.round(optimal.time_from_address1/60)}min / ${Math.round(optimal.time_from_address2/60)}min<br>
+                                ⚖️ Difference: ${optimal.time_difference_minutes} minutes
+                            </div>
+                        `;
+                    }
+                } else {
+                    resultsDiv.innerHTML = `
+                        <div class="error">
+                            ❌ Error: ${result.error || 'Unknown error occurred'}
+                        </div>
+                    `;
+                }
+                
+            } catch (error) {
+                resultsDiv.innerHTML = `
+                    <div class="error">
+                        ❌ Network error: ${error.message}
+                    </div>
+                `;
+            } finally {
+                loadingDiv.style.display = 'none';
+                searchBtn.disabled = false;
+                searchBtn.textContent = '🚇 Find Meeting Point';
+            }
+        });
+        
+        // Make closeAllInfoWindows globally available for the close buttons
+        window.closeAllInfoWindows = closeAllInfoWindows;
+        window.applyFilters = applyFilters;
+    </script>
+    
+    <!-- Google Maps JavaScript API -->
+    <script async defer 
+        src="https://maps.googleapis.com/maps/api/js?key=AIzaSyA86DvKgj54RDVXG9HzGB22Wl7DG1cYH6I&callback=initMaps">
+    </script>
+</body>
+</html>
