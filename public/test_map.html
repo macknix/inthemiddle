@@ -36,9 +36,28 @@
         }
     </script>
     
-    <script async defer 
-        src="https://maps.googleapis.com/maps/api/js?key=AIzaSyA86DvKgj54RDVXG9HzGB22Wl7DG1cYH6I&callback=initMap"
-        onerror="handleError()">
+    <!-- Load Google Maps API dynamically -->
+    <script>
+        // Load Google Maps API with key from backend
+        fetch('http://localhost:5001/api/config')
+            .then(response => response.json())
+            .then(config => {
+                if (config.success && config.data.googleMapsApiKey) {
+                    const script = document.createElement('script');
+                    script.async = true;
+                    script.defer = true;
+                    script.src = `https://maps.googleapis.com/maps/api/js?key=${config.data.googleMapsApiKey}&callback=initMap`;
+                    script.onerror = handleError;
+                    document.head.appendChild(script);
+                } else {
+                    console.error('Google Maps API key not available');
+                    handleError();
+                }
+            })
+            .catch(error => {
+                console.error('Failed to get configuration:', error);
+                handleError();
+            });
     </script>
 </body>
 </html>

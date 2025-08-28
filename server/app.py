@@ -2,7 +2,10 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
 import os
-from maps_service import GoogleMapsService, MiddlePointFinder
+try:
+    from .maps_service import GoogleMapsService, MiddlePointFinder
+except ImportError:
+    from maps_service import GoogleMapsService, MiddlePointFinder
 
 # Load environment variables
 load_dotenv()
@@ -34,6 +37,7 @@ def health_check():
         'endpoints': {
             'find_middle_point': '/api/find-middle-point',
             'geocode': '/api/geocode',
+            'config': '/api/config',
             'health': '/'
         },
         'status': 'healthy'
@@ -162,6 +166,20 @@ def get_transit_time():
             
     except Exception as e:
         return jsonify({'error': f'Server error: {str(e)}'}), 500
+
+
+@app.route('/api/config', methods=['GET'])
+def get_config():
+    """
+    Get frontend configuration including Google Maps API key
+    """
+    return jsonify({
+        'success': True,
+        'data': {
+            'googleMapsApiKey': api_key if api_key and api_key != "your_api_key_here" else None,
+            'apiBaseUrl': request.host_url.rstrip('/')
+        }
+    })
 
 
 @app.errorhandler(404)

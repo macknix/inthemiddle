@@ -25,10 +25,12 @@ class CustomHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         pass
 
 def serve_map_interface():
-    PORT = 8080
+    PORT = 8082
     
     # Change to the public directory to serve frontend files
-    os.chdir('/Users/macknixon/projects/meet-in-the-middle/public')
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    public_dir = os.path.join(project_root, 'public')
+    os.chdir(public_dir)
     
     with socketserver.TCPServer(("", PORT), CustomHTTPRequestHandler) as httpd:
         print(f"🌐 Map Interface Server Starting...")
@@ -42,7 +44,7 @@ def serve_map_interface():
         # Auto-open browser after a short delay
         def open_browser():
             time.sleep(1)
-            webbrowser.open(f'http://localhost:{PORT}/map_interface.html')
+            webbrowser.open(f'http://localhost:{PORT}/index.html')
         
         browser_thread = threading.Thread(target=open_browser)
         browser_thread.daemon = True

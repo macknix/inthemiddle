@@ -1,223 +1,187 @@
-# Meet in the Middle API
+# Meet in the Middle
 
-A Python Flask API that finds optimal meeting points between two addresses based on public transport travel time using Google Maps APIs.
+A Flask web application that finds the optimal meeting point between two addresses based on public transport travel time, with business discovery and filtering capabilities.
 
-## Features
+## 🏗️ Project Structure
 
-- **Address Geocoding**: Convert addresses to coordinates with address verification
-- **Transit Time Calculation**: Get public transport travel times between points
-- **Smart Middle Point Finding**: Find optimal meeting locations that minimize travel time differences
-- **Nearby Places Discovery**: Suggest meeting venues near the optimal point
-- **RESTful API**: Easy to integrate with web and mobile applications
-
-## Setup
-
-### 1. Environment Setup
-
-The project uses a Python virtual environment which is already configured. Activate it:
-
-```bash
-source env/bin/activate
+```
+meet-in-the-middle/
+├── public/                 # Frontend assets (served directly to users)
+│   ├── index.html         # Main application interface
+│   ├── styles/
+│   │   └── main.css      # Application styles
+│   ├── scripts/
+│   │   └── main.js       # Frontend JavaScript logic
+│   └── *.html            # Other HTML pages (test, debug, etc.)
+├── server/                # Backend Python code
+│   ├── __init__.py       # Server package initialization
+│   ├── app.py            # Main Flask application
+│   ├── maps_service.py   # Google Maps API integration
+│   ├── serve_map.py      # Static file server
+│   └── tests/
+│       ├── test_api.py   # API unit tests
+│       └── demo.py       # Demo/example scripts
+├── env/                  # Python virtual environment
+├── main.py              # Alternative entry point
+├── run_dev.py           # Development server script
+├── requirements.txt     # Python dependencies
+├── .env                 # Environment variables (API keys)
+└── README.md           # This file
 ```
 
-### 2. Install Dependencies
+## 🚀 Features
 
-```bash
-pip install -r requirements.txt
-```
+- **🎯 Optimal Meeting Point**: Finds the best location based on equal transit times
+- **🚇 Public Transport**: Uses real-time Google Maps transit directions
+- **🗺️ Interactive Maps**: Visual representation with custom markers and info windows
+- **⭕ Walking Distance Rings**: Shows 5, 10, and 15-minute walking areas
+- **🏢 Business Discovery**: Displays nearby restaurants, cafes, parks, and more
+- **🔍 Smart Filtering**: Filter businesses by category with real-time updates
+- **📱 Responsive Design**: Works on desktop and mobile devices
 
-### 3. Google Maps API Setup
+## 🛠️ Setup and Installation
 
-1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Create a new project or select an existing one
-3. Enable the following APIs:
-   - **Geocoding API** (for address to coordinates conversion)
-   - **Directions API** (for transit time calculation)
-   - **Places API** (for finding nearby meeting venues)
-4. Create an API key with access to these services
-5. Copy `.env.example` to `.env`:
+### Prerequisites
+- Python 3.8+
+- Google Maps API key with the following APIs enabled:
+  - Maps JavaScript API
+  - Geocoding API
+  - Directions API
+  - Places API
+
+### Installation
+
+1. **Clone the repository**
+   ```bash
+   git clone <repository-url>
+   cd meet-in-the-middle
+   ```
+
+2. **Create and activate virtual environment**
+   ```bash
+   python3 -m venv env
+   source env/bin/activate  # On Windows: env\Scripts\activate
+   ```
+
+3. **Install dependencies**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. **Configure environment variables**
    ```bash
    cp .env.example .env
-   ```
-6. Edit `.env` and add your API key:
-   ```
-   GOOGLE_MAPS_API_KEY=your_actual_api_key_here
+   # Edit .env and add your Google Maps API key
+   echo "GOOGLE_MAPS_API_KEY=your_api_key_here" > .env
    ```
 
-### 4. Run the API
+## 🎮 Running the Application
 
+### Development Mode (Recommended)
+Start both servers with one command:
 ```bash
-python app.py
+source env/bin/activate
+python run_dev.py
 ```
 
-The API will start on `http://localhost:5000`
+This will start:
+- **API Server**: http://localhost:5000
+- **Web Interface**: http://localhost:8080
 
-## API Endpoints
+### Manual Start (Individual Servers)
 
-### 1. Health Check
-```
-GET /
-```
-Returns API status and available endpoints.
-
-### 2. Geocode Address
-```
-POST /api/geocode
-```
-**Request Body:**
-```json
-{
-  "address": "123 Main St, New York, NY"
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "formatted_address": "123 Main St, New York, NY 10001, USA",
-    "lat": 40.7128,
-    "lng": -74.0060
-  }
-}
-```
-
-### 3. Find Middle Point (Main Feature)
-```
-POST /api/find-middle-point
-```
-**Request Body:**
-```json
-{
-  "address1": "Times Square, New York, NY",
-  "address2": "Brooklyn Bridge, New York, NY",
-  "search_radius": 2000
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "address1": {
-      "input": "Times Square, New York, NY",
-      "geocoded": {
-        "formatted_address": "Times Square, New York, NY, USA",
-        "lat": 40.7580,
-        "lng": -73.9855
-      }
-    },
-    "address2": {
-      "input": "Brooklyn Bridge, New York, NY",
-      "geocoded": {
-        "formatted_address": "Brooklyn Bridge, New York, NY, USA",
-        "lat": 40.7061,
-        "lng": -73.9969
-      }
-    },
-    "geographic_midpoint": {
-      "lat": 40.7320,
-      "lng": -73.9912
-    },
-    "optimal_meeting_point": {
-      "name": "Washington Square Park",
-      "formatted_address": "4th St, New York, NY",
-      "lat": 40.7308,
-      "lng": -73.9973,
-      "time_from_address1": 900,
-      "time_from_address2": 1080,
-      "time_difference_seconds": 180,
-      "time_difference_minutes": 3.0,
-      "rating": 4.5,
-      "types": ["park", "point_of_interest"]
-    },
-    "nearby_alternatives": [...]
-  }
-}
-```
-
-### 4. Transit Time
-```
-POST /api/transit-time
-```
-**Request Body:**
-```json
-{
-  "origin": {"lat": 40.7128, "lng": -74.0060},
-  "destination": {"lat": 40.7589, "lng": -73.9851}
-}
-```
-
-## Testing
-
-Run the test suite to verify everything is working:
-
+**Start the Flask API server:**
 ```bash
-python test_api.py
+source env/bin/activate
+python -m server.app
+# Or: python main.py
 ```
 
-This will test all endpoints with sample data. Make sure the API is running before running tests.
-
-### Manual Testing Examples
-
-You can also test manually using curl:
-
+**Start the static file server:**
 ```bash
-# Health check
-curl http://localhost:5000/
-
-# Geocode an address
-curl -X POST http://localhost:5000/api/geocode \
-  -H "Content-Type: application/json" \
-  -d '{"address": "Central Park, New York"}'
-
-# Find middle point
-curl -X POST http://localhost:5000/api/find-middle-point \
-  -H "Content-Type: application/json" \
-  -d '{
-    "address1": "Grand Central Terminal, New York",
-    "address2": "Brooklyn Bridge, New York",
-    "search_radius": 1500
-  }'
+source env/bin/activate
+python -m server.serve_map
 ```
 
-## How It Works
+## 🧪 Testing
 
-1. **Address Geocoding**: The API first converts both input addresses to precise coordinates using Google's Geocoding API
-2. **Geographic Midpoint**: Calculates the mathematical midpoint between the two locations
-3. **Transit Time Analysis**: Uses Google's Directions API to calculate public transport travel times
-4. **Venue Discovery**: Searches for nearby points of interest around the geographic midpoint using Google Places API
-5. **Optimization**: Evaluates each potential meeting spot to find the one that minimizes travel time differences between both parties
-6. **Results**: Returns the optimal meeting point along with travel times and alternative options
+**Run API tests:**
+```bash
+source env/bin/activate
+python -m server.tests.test_api
+```
 
-## Configuration
+**Run demo script:**
+```bash
+source env/bin/activate
+python -m server.tests.demo
+```
 
-- `search_radius`: Controls how far from the geographic midpoint to search for venues (100-10000 meters)
-- The API prioritizes locations with minimal travel time differences between both starting points
-- Results include venue ratings and types to help users choose appropriate meeting spots
+## 📖 Usage
 
-## Error Handling
+1. **Open the web interface** at http://localhost:8080
+2. **Enter two addresses** in the input fields
+3. **Click "Find Meeting Point"** to analyze optimal locations
+4. **Explore the map** with markers showing:
+   - 🔵 **A**: First address
+   - 🔴 **B**: Second address  
+   - ⭐ **Green**: Optimal meeting point
+   - 🟡 **Yellow**: Alternative options
+   - 🔵 **Small**: Nearby businesses
+5. **Use business filters** in the sidebar to show/hide:
+   - 🍽️ Restaurants
+   - ☕ Cafes
+   - 🍺 Bars
+   - 🛍️ Shopping
+   - 🌳 Parks
+   - 🏛️ Attractions
+   - 💪 Gyms
+   - 📚 Libraries
+6. **Switch to "Travel Routes" tab** to see detailed directions
 
-The API includes comprehensive error handling for:
-- Invalid addresses that cannot be geocoded
-- No available public transport routes
-- API key issues
-- Network connectivity problems
-- Invalid request parameters
+## 🔧 API Endpoints
 
-## Next Steps
+- `GET /` - Health check and available endpoints
+- `POST /api/find-middle-point` - Find optimal meeting point
+- `POST /api/geocode` - Geocode an address
+- `POST /api/transit-time` - Get transit time between points
 
-This API provides the backend foundation. You can now:
-1. Build a web frontend using React, Vue, or plain HTML/JavaScript
-2. Create a mobile app that consumes this API
-3. Add features like saved locations, user preferences, or meeting scheduling
-4. Integrate with mapping libraries for visual display of results
+## 🎨 Architecture
 
-## Troubleshooting
+### Backend (Flask)
+- **Separation of Concerns**: Clean separation between API logic and map services
+- **Modular Design**: Google Maps integration in dedicated service class
+- **Error Handling**: Comprehensive error handling and validation
+- **Testing**: Unit tests for API endpoints
 
-- **"Google Maps API key not configured"**: Make sure your `.env` file exists and contains a valid API key
-- **Geocoding failures**: Check that the addresses are specific enough and exist
-- **No transit routes found**: Some locations may not have public transport connections
-- **API quota exceeded**: Monitor your Google Maps API usage in the Cloud Console
+### Frontend (Vanilla JavaScript)
+- **Modern ES6+**: Uses modern JavaScript features
+- **Modular CSS**: Organized stylesheets with responsive design
+- **Interactive Maps**: Google Maps integration with custom markers and info windows
+- **Real-time Filtering**: Dynamic business filtering without page reload
+
+## 🌍 Environment Variables
+
+Create a `.env` file with:
+```
+GOOGLE_MAPS_API_KEY=your_google_maps_api_key_here
+```
+
+## 📝 Notes
+
+- The application uses walking distance estimates (80m/minute average)
+- Transit times are calculated using Google Maps real-time data
+- Business search radius is set to 2km around the optimal meeting point
+- The interface automatically updates when filters are changed
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## 📄 License
+
+This project is licensed under the MIT License.
