@@ -7,16 +7,16 @@
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     line-height: 1.6;
-    color: #333;
-    background: #f5f5f5;
+    color: #e0e0e0;
+    background: #121212;
 }
 
 .header {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%);
     color: white;
     padding: 20px;
     text-align: center;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    box-shadow: 0 2px 10px rgba(0,0,0,0.3);
 }
 
 .header h1 {
@@ -35,10 +35,10 @@ body {
 }
 
 .sidebar {
-    background: white;
+    background: #1e1e1e;
     padding: 25px;
     border-radius: 12px;
-    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+    box-shadow: 0 4px 15px rgba(0,0,0,0.3);
     overflow-y: auto;
 }
 
@@ -50,25 +50,31 @@ label {
     display: block;
     margin-bottom: 8px;
     font-weight: 600;
-    color: #555;
+    color: #b0b0b0;
 }
 
 input[type="text"], input[type="number"] {
     width: 100%;
     padding: 12px;
-    border: 2px solid #e1e5e9;
+    border: 2px solid #404040;
     border-radius: 8px;
     font-size: 14px;
     transition: border-color 0.3s ease;
+    background: #2a2a2a;
+    color: #e0e0e0;
+}
+
+input[type="text"]::placeholder, input[type="number"]::placeholder {
+    color: #666;
 }
 
 input[type="text"]:focus, input[type="number"]:focus {
     outline: none;
-    border-color: #667eea;
+    border-color: #5a7ef4;
 }
 
 .search-btn {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: linear-gradient(135deg, #4a5aed 0%, #5a6aff 100%);
     color: white;
     border: none;
     padding: 12px 20px;
@@ -91,12 +97,12 @@ input[type="text"]:focus, input[type="number"]:focus {
 }
 
 .map-container {
-    background: white;
+    background: #1e1e1e;
     border-radius: 12px;
-    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+    box-shadow: 0 4px 15px rgba(0,0,0,0.3);
     overflow: hidden;
     display: grid;
-    grid-template-rows: auto 1fr;
+    grid-template-rows: 1fr;
 }
 
 .map-header {
@@ -151,18 +157,18 @@ input[type="text"]:focus, input[type="number"]:focus {
 .loading {
     text-align: center;
     padding: 20px;
-    color: #666;
+    color: #b0b0b0;
 }
 
 .results {
     margin-top: 20px;
     padding: 20px;
-    background: #f8f9fa;
+    background: #2a2a2a;
     border-radius: 8px;
 }
 
 .result-item {
-    background: white;
+    background: #3a3a3a;
     padding: 15px;
     margin: 10px 0;
     border-radius: 6px;
@@ -214,39 +220,40 @@ input[type="text"]:focus, input[type="number"]:focus {
 }
 
 .status-ok {
-    background: #d4edda;
-    color: #155724;
+    background: #1b5e20;
+    color: #a5d6a7;
 }
 
 .status-error {
-    background: #f8d7da;
-    color: #721c24;
+    background: #b71c1c;
+    color: #ffcdd2;
 }
 
 .route-info {
-    background: white;
+    background: #2a2a2a;
     padding: 12px;
     margin: 8px 0;
     border-radius: 6px;
-    border: 1px solid #e1e5e9;
+    border: 1px solid #404040;
     font-size: 13px;
+    color: #e0e0e0;
 }
 
 .route-info strong {
-    color: #667eea;
+    color: #5a7ef4;
 }
 
 .business-filters {
-    background: white;
+    background: #2a2a2a;
     padding: 20px;
     border-radius: 8px;
     margin-top: 15px;
-    border: 1px solid #e1e5e9;
+    border: 1px solid #404040;
 }
 
 .business-filters h4 {
     margin-bottom: 15px;
-    color: #555;
+    color: #b0b0b0;
 }
 
 .filter-group {
@@ -264,10 +271,11 @@ input[type="text"]:focus, input[type="number"]:focus {
     padding: 5px;
     border-radius: 4px;
     transition: background 0.2s ease;
+    color: #e0e0e0;
 }
 
 .filter-checkbox:hover {
-    background: #f8f9fa;
+    background: #3a3a3a;
 }
 
 .filter-checkbox input {
@@ -276,7 +284,7 @@ input[type="text"]:focus, input[type="number"]:focus {
 }
 
 .filter-apply-btn {
-    background: #667eea;
+    background: #4a5aed;
     color: white;
     border: none;
     padding: 8px 16px;
@@ -287,7 +295,7 @@ input[type="text"]:focus, input[type="number"]:focus {
 }
 
 .filter-apply-btn:hover {
-    background: #5a6fd8;
+    background: #3a4ad8;
 }
 
 .business-count {
