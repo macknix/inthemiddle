@@ -180,22 +180,43 @@ class MiddlePointFinder:
             
             # Evaluate each nearby place
             best_meeting_point = None
-            best_time_difference = float('inf')
+            best_score = float('inf')
             
             for place in nearby_places:
                 time1_to_place = self.maps_service.get_transit_time(location1, place)
                 time2_to_place = self.maps_service.get_transit_time(location2, place)
                 
                 if time1_to_place and time2_to_place:
+                    # Calculate time difference (fairness factor)
                     time_difference = abs(time1_to_place - time2_to_place)
-                    if time_difference < best_time_difference:
-                        best_time_difference = time_difference
+                    
+                    # Calculate total travel time (efficiency factor)
+                    total_time = time1_to_place + time2_to_place
+                    
+                    # Calculate composite score: minimize both total time and time difference
+                    # Weight the fairness (equal travel times) more heavily
+                    fairness_weight = 0.7  # How much we care about equal travel times
+                    efficiency_weight = 0.3  # How much we care about minimizing total time
+                    
+                    # Normalize scores (divide by 3600 to convert seconds to hours for scoring)
+                    fairness_score = time_difference / 3600  # Lower is better
+                    efficiency_score = total_time / 3600     # Lower is better
+                    
+                    composite_score = (fairness_weight * fairness_score) + (efficiency_weight * efficiency_score)
+                    
+                    if composite_score < best_score:
+                        best_score = composite_score
                         best_meeting_point = {
                             **place,
                             'time_from_address1': time1_to_place,
                             'time_from_address2': time2_to_place,
                             'time_difference_seconds': time_difference,
-                            'time_difference_minutes': round(time_difference / 60, 1)
+                            'time_difference_minutes': round(time_difference / 60, 1),
+                            'total_travel_time_seconds': total_time,
+                            'total_travel_time_minutes': round(total_time / 60, 1),
+                            'composite_score': composite_score,
+                            'fairness_score': fairness_score,
+                            'efficiency_score': efficiency_score
                         }
             
             # Prepare result

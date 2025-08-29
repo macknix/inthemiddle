@@ -18,13 +18,13 @@
             
             <form id="searchForm">
                 <div class="input-group">
-                    <label for="address1">📍 First Address</label>
-                    <input type="text" id="address1" placeholder="e.g., Times Square, New York, NY" required>
+                    <label for="address1">📍 First Address <span id="locationStatus" style="font-size: 12px; color: #666;"></span></label>
+                    <input type="text" id="address1" placeholder="Detecting your location..." required>
                 </div>
                 
                 <div class="input-group">
                     <label for="address2">📍 Second Address</label>
-                    <input type="text" id="address2" placeholder="e.g., Central Park, New York, NY" required>
+                    <input type="text" id="address2" placeholder="Start typing for suggestions..." required>
                 </div>
                 
                 <button type="submit" class="search-btn" id="searchBtn">
@@ -84,7 +84,7 @@
     </div>
 
     <!-- Scripts -->
-    <script src="scripts/main.js?v=4"></script>
+    <script src="scripts/main.js?v=6"></script>
     
     <!-- Load Google Maps API dynamically with key from backend -->
     <script>
