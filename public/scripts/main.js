@@ -845,59 +845,6 @@ function displayResultsOnMap(data) {
         });
     }
     
-    // Show alternative meeting points as smaller markers
-    if (data.nearby_alternatives) {
-        data.nearby_alternatives.slice(0, 5).forEach((alt, index) => {
-            if (alt.lat && alt.lng && alt.name !== optimal?.name) {
-                const altMarker = new google.maps.Marker({
-                    position: { lat: alt.lat, lng: alt.lng },
-                    map: map,
-                    title: `Alternative: ${alt.name}`,
-                    icon: {
-                        url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
-                            <svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 30 30">
-                                <circle cx="15" cy="15" r="12" fill="#ffc107" stroke="white" stroke-width="2"/>
-                                <text x="15" y="19" text-anchor="middle" fill="white" font-family="Arial" font-size="10" font-weight="bold">${index + 2}</text>
-                            </svg>
-                        `),
-                        scaledSize: new google.maps.Size(30, 30)
-                    }
-                });
-                markers.push(altMarker);
-                
-                const altInfoWindow = new google.maps.InfoWindow({
-                    content: `
-                        <div style="padding: 8px; max-width: 200px;">
-                            <h5 style="margin: 0 0 5px 0; color: #ffc107;">📍 ${alt.name}</h5>
-                            <p style="margin: 0; font-size: 12px;">${alt.formatted_address || 'Alternative meeting spot'}</p>
-                            ${alt.rating ? `<p style="margin: 5px 0 0 0; font-size: 12px;">⭐ ${alt.rating}/5</p>` : ''}
-                        </div>
-                    `
-                });
-                
-                // Add unique identifier for debugging
-                altInfoWindow._debugId = `alternative-${alt.name}`;
-                
-                altMarker.addListener('click', (event) => {
-                    console.log('⭐ Alternative marker clicked:', alt.name);
-                    console.log('🔍 AltInfoWindow ID:', altInfoWindow._debugId);
-                    event.stop(); // Stop event propagation to map
-                    markerClickedRecently = true;
-                    setTimeout(() => { markerClickedRecently = false; }, 200);
-                    
-                    console.log('📋 Before opening alternative popup, openInfoWindows:', openInfoWindows.length);
-                    console.log('📋 Current openInfoWindows IDs:', openInfoWindows.map(w => w._debugId || 'no-id'));
-                    closeAllInfoWindows();
-                    console.log('📋 After closeAllInfoWindows, openInfoWindows:', openInfoWindows.length);
-                    altInfoWindow.open(map, altMarker);
-                    openInfoWindows.push(altInfoWindow);
-                    console.log('📋 After opening alternative popup, openInfoWindows:', openInfoWindows.length);
-                    console.log('📋 New openInfoWindows IDs:', openInfoWindows.map(w => w._debugId || 'no-id'));
-                });
-            }
-        });
-    }
-    
     // Display businesses within walking circles
     displayBusinesses(categorizedBusinesses);
 }
