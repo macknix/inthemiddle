@@ -248,9 +248,6 @@ function displayRoutes(address1, address2, meetingPoint) {
                 try {
                     const route = result.routes[0];
                     addRouteClickListener(directionsRenderer1, route, 'Route from Address A', '#4285f4');
-                    
-                    // DEBUG: Add a test button to manually trigger route info
-                    addDebugButton(route, 'Route from Address A', '#4285f4');
                 } catch (e) {
                     console.error('Error adding click listener to route 1:', e);
                 }
@@ -275,9 +272,6 @@ function displayRoutes(address1, address2, meetingPoint) {
                         try {
                             const route = result2.routes[0];
                             addRouteClickListener(directionsRenderer1, route, 'Route from Address A (Driving)', '#4285f4');
-                            
-                            // DEBUG: Add a test button
-                            addDebugButton(route, 'Route from Address A (Driving)', '#4285f4');
                         } catch (e) {
                             console.error('Error adding click listener to route 1 (driving):', e);
                         }
@@ -311,9 +305,6 @@ function displayRoutes(address1, address2, meetingPoint) {
                 try {
                     const route = result.routes[0];
                     addRouteClickListener(directionsRenderer2, route, 'Route from Address B', '#ea4335');
-                    
-                    // DEBUG: Add a test button
-                    addDebugButton(route, 'Route from Address B', '#ea4335');
                 } catch (e) {
                     console.error('Error adding click listener to route 2:', e);
                 }
@@ -348,29 +339,6 @@ function displayRoutes(address1, address2, meetingPoint) {
             });
         }
     });
-}
-
-// DEBUG: Add a visible button to test route instructions
-function addDebugButton(route, routeName, color) {
-    const debugDiv = document.getElementById('debug-buttons') || (() => {
-        const div = document.createElement('div');
-        div.id = 'debug-buttons';
-        div.style.cssText = 'position: fixed; top: 10px; right: 10px; z-index: 1000; background: white; padding: 10px; border-radius: 5px; box-shadow: 0 2px 10px rgba(0,0,0,0.2);';
-        document.body.appendChild(div);
-        return div;
-    })();
-    
-    const button = document.createElement('button');
-    button.textContent = `Test ${routeName}`;
-    button.style.cssText = `background: ${color}; color: white; border: none; padding: 8px 12px; margin: 2px; border-radius: 4px; cursor: pointer; font-size: 12px;`;
-    button.onclick = () => {
-        console.log('🧪 Testing route instructions for:', routeName);
-        const infoWindow = new google.maps.InfoWindow({ maxWidth: 400 });
-        const testPosition = new google.maps.LatLng(37.4419, -122.1430);
-        showRouteInstructions(infoWindow, route, routeName, color, testPosition);
-    };
-    
-    debugDiv.appendChild(button);
 }
 
 // Add click listener to route polylines for showing instructions
@@ -1292,23 +1260,6 @@ function addFallbackClickDetection(renderer, route, routeName, color, infoWindow
         console.error('Error in fallback click detection:', error);
     }
 }
-
-// Test function to verify click detection is working
-window.testRouteClick = function() {
-    console.log('Testing route click detection...');
-    console.log('Current routes:', routes.length);
-    routes.forEach((route, index) => {
-        console.log(`Route ${index}:`, route);
-        if (route.polyline) {
-            console.log(`Polyline ${index} clickable:`, route.polyline.getClickable());
-            console.log(`Polyline ${index} map:`, route.polyline.getMap());
-        }
-    });
-    
-    // Also test if geometry library is available
-    console.log('Geometry library available:', typeof google.maps.geometry !== 'undefined');
-    console.log('Encoding available:', typeof google.maps.geometry?.encoding !== 'undefined');
-};
 
 // Make functions globally available for the HTML
 window.closeAllInfoWindows = closeAllInfoWindows;
