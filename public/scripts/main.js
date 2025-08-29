@@ -153,6 +153,15 @@ function initMaps() {
     });
     
     checkApiStatus();
+    
+    // Initialize Google Places Autocomplete
+    initializeAutocomplete();
+    
+    // Setup input field enhancements
+    setupInputFieldEnhancements();
+    
+    // Initialize location detection after maps are ready
+    initializeLocationDetection();
 }
 
 // Check API status
@@ -1091,121 +1100,346 @@ document.getElementById('searchForm').addEventListener('submit', async (e) => {
     }
 });
 
-// Helper function to find DirectionsRenderer polylines on the map
-function findDirectionsPolylines(map, targetColor) {
-    const foundPolylines = [];
+// Google Places Autocomplete variables
+let autocomplete1, autocomplete2;
+
+// Initialize Google Places Autocomplete for address inputs
+function initializeAutocomplete() {
+    console.log('🔍 Initializing Google Places Autocomplete...');
     
-    // This is a workaround since Google Maps doesn't expose DirectionsRenderer polylines directly
-    // We'll search through the map's overlays to find polylines that match our route colors
-    try {
-        // Get all overlays from the map
-        const overlays = [];
-        
-        // Try to access the map's internal structure (this is hacky but necessary)
-        // Look for polylines with matching colors
-        const mapDiv = map.getDiv();
-        if (mapDiv) {
-            // Search for SVG polylines in the DOM that match our route colors
-            const svgElements = mapDiv.querySelectorAll('svg path[stroke]');
-            svgElements.forEach((path) => {
-                const stroke = path.getAttribute('stroke');
-                if (stroke && (stroke.includes(targetColor) || 
-                    (targetColor === '#4285f4' && (stroke.includes('rgb(66, 133, 244)') || stroke.includes('#4285f4'))) ||
-                    (targetColor === '#ea4335' && (stroke.includes('rgb(234, 67, 53)') || stroke.includes('#ea4335'))))) {
-                    console.log('Found matching SVG path element for color:', targetColor);
-                    // This approach would require creating polylines from SVG paths
-                    // which is complex, so we'll use a different approach
-                }
-            });
-        }
-        
-        // Alternative approach: Use reflection to access internal polylines
-        // This is not guaranteed to work across all Google Maps versions
-        if (map.__gm && map.__gm.overlayLayer) {
-            // Try to access overlays through internal API
-            console.log('Attempting to access internal overlays...');
-        }
-        
-    } catch (error) {
-        console.error('Error finding DirectionsRenderer polylines:', error);
+    const address1Input = document.getElementById('address1');
+    const address2Input = document.getElementById('address2');
+    
+    if (!address1Input || !address2Input) {
+        console.error('Address input fields not found');
+        return;
     }
     
-    return foundPolylines;
+    // Configure autocomplete options
+    const autocompleteOptions = {
+        types: ['geocode'], // Restrict to addresses
+        fields: ['formatted_address', 'geometry', 'name', 'place_id'],
+        componentRestrictions: { country: [] } // Allow all countries
+    };
+    
+    try {
+        // Initialize autocomplete for Address 1
+        autocomplete1 = new google.maps.places.Autocomplete(address1Input, autocompleteOptions);
+        autocomplete1.addListener('place_changed', () => {
+            handlePlaceSelection(autocomplete1, 'address1');
+        });
+        
+        // Initialize autocomplete for Address 2
+        autocomplete2 = new google.maps.places.Autocomplete(address2Input, autocompleteOptions);
+        autocomplete2.addListener('place_changed', () => {
+            handlePlaceSelection(autocomplete2, 'address2');
+        });
+        
+        console.log('✅ Google Places Autocomplete initialized successfully');
+        
+        // Add styling for autocomplete dropdown
+        addAutocompleteStyles();
+        
+    } catch (error) {
+        console.error('❌ Failed to initialize Google Places Autocomplete:', error);
+    }
 }
 
-// Fallback approach when we can't access actual polylines
-function addFallbackClickDetection(renderer, route, routeName, color, infoWindow) {
-    console.log('Using fallback click detection for:', routeName);
+// Handle place selection from autocomplete
+function handlePlaceSelection(autocomplete, inputId) {
+    console.log(`🏠 Place selected for ${inputId}`);
+    
+    const place = autocomplete.getPlace();
+    const input = document.getElementById(inputId);
+    
+    if (!place || !place.geometry) {
+        console.log('❌ No geometry data for selected place');
+        return;
+    }
+    
+    console.log(`✅ Selected place: ${place.formatted_address || place.name}`);
+    
+    // Update the input value with the formatted address
+    if (input) {
+        input.value = place.formatted_address || place.name;
+    }
+    
+    // Store place data for potential future use
+    input.dataset.placeId = place.place_id || '';
+    input.dataset.lat = place.geometry.location.lat();
+    input.dataset.lng = place.geometry.location.lng();
+    
+    // Update location status for address1 if it was changed from auto-detected location
+    if (inputId === 'address1') {
+        const locationStatus = document.getElementById('locationStatus');
+        if (locationStatus) {
+            locationStatus.textContent = '(selected from suggestions)';
+            locationStatus.style.color = '#1a73e8';
+        }
+    }
+    
+    console.log(`📍 Place coordinates: ${place.geometry.location.lat()}, ${place.geometry.location.lng()}`);
+}
+
+// Add custom styles for autocomplete dropdown
+function addAutocompleteStyles() {
+    // Check if styles already added
+    if (document.getElementById('autocomplete-styles')) {
+        return;
+    }
+    
+    const styles = document.createElement('style');
+    styles.id = 'autocomplete-styles';
+    styles.textContent = `
+        /* Google Places Autocomplete styling */
+        .pac-container {
+            background-color: white;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-size: 14px;
+            margin-top: 2px;
+            max-width: none !important;
+            z-index: 10000;
+        }
+        
+        .pac-container:after {
+            display: none;
+        }
+        
+        .pac-item {
+            padding: 12px 16px;
+            border-bottom: 1px solid #f0f0f0;
+            cursor: pointer;
+            line-height: 1.4;
+        }
+        
+        .pac-item:last-child {
+            border-bottom: none;
+        }
+        
+        .pac-item:hover {
+            background-color: #f8f9fa;
+        }
+        
+        .pac-item-selected {
+            background-color: #e3f2fd !important;
+        }
+        
+        .pac-matched {
+            font-weight: 600;
+            color: #1a73e8;
+        }
+        
+        .pac-item-query {
+            color: #333;
+            font-size: 14px;
+        }
+        
+        .pac-secondary-text {
+            color: #666;
+            font-size: 12px;
+            margin-top: 2px;
+        }
+        
+        .pac-icon {
+            background-image: none;
+            background-size: 16px 16px;
+            height: 16px;
+            width: 16px;
+            margin-right: 12px;
+            margin-top: 2px;
+        }
+        
+        .pac-icon-marker {
+            background-color: #4285f4;
+            border-radius: 50%;
+            position: relative;
+        }
+        
+        .pac-icon-marker:after {
+            content: "📍";
+            position: absolute;
+            top: -2px;
+            left: 2px;
+            font-size: 12px;
+        }
+    `;
+    
+    document.head.appendChild(styles);
+    console.log('✅ Autocomplete styles added');
+}
+
+// Enhanced input field setup with autocomplete hints
+function setupInputFieldEnhancements() {
+    const address1Input = document.getElementById('address1');
+    const address2Input = document.getElementById('address2');
+    
+    if (address1Input) {
+        // Add focus/blur handlers for better UX
+        address1Input.addEventListener('focus', () => {
+            console.log('📝 Address 1 input focused');
+            if (address1Input.value === '' || address1Input.value === 'Times Square, New York, NY') {
+                // Clear default value when user starts typing
+                if (address1Input.value === 'Times Square, New York, NY') {
+                    address1Input.value = '';
+                }
+            }
+        });
+        
+        address1Input.addEventListener('input', () => {
+            // Clear stored place data when user manually types
+            delete address1Input.dataset.placeId;
+            delete address1Input.dataset.lat;
+            delete address1Input.dataset.lng;
+        });
+    }
+    
+    if (address2Input) {
+        address2Input.addEventListener('focus', () => {
+            console.log('📝 Address 2 input focused');
+        });
+        
+        address2Input.addEventListener('input', () => {
+            // Clear stored place data when user manually types
+            delete address2Input.dataset.placeId;
+            delete address2Input.dataset.lat;
+            delete address2Input.dataset.lng;
+        });
+    }
+}
+
+// Geolocation functionality for preloading current address
+async function getCurrentLocationAndAddress() {
+    console.log('🌍 Attempting to get user location...');
+    
+    const locationStatus = document.getElementById('locationStatus');
+    const address1Input = document.getElementById('address1');
+    
+    if (locationStatus) {
+        locationStatus.textContent = '(detecting...)';
+        locationStatus.style.color = '#666';
+    }
+    
+    if (!navigator.geolocation) {
+        console.log('❌ Geolocation not supported by this browser');
+        if (locationStatus) {
+            locationStatus.textContent = '(location not supported)';
+            locationStatus.style.color = '#ff6b6b';
+        }
+        setDefaultAddress();
+        return;
+    }
     
     try {
-        // Create a custom polyline for click detection using overview_path
-        let routePath = [];
-        
-        // Try to get path from overview_polyline first
-        if (route.overview_polyline && route.overview_polyline.points) {
-            try {
-                if (typeof google.maps.geometry === 'undefined' || typeof google.maps.geometry.encoding === 'undefined') {
-                    console.error('Google Maps geometry library not loaded!');
-                    throw new Error('Geometry library not available');
+        const position = await new Promise((resolve, reject) => {
+            navigator.geolocation.getCurrentPosition(
+                resolve,
+                reject,
+                {
+                    enableHighAccuracy: true,
+                    timeout: 10000,
+                    maximumAge: 300000 // 5 minutes
                 }
-                const decodedPath = google.maps.geometry.encoding.decodePath(route.overview_polyline.points);
-                routePath = decodedPath;
-                console.log('Successfully decoded', decodedPath.length, 'points from overview polyline');
-            } catch (error) {
-                console.error('Error decoding overview polyline:', error);
-                routePath = [];
-            }
-        }
-        
-        if (routePath.length === 0) {
-            // Fallback: build path from legs and steps
-            console.log('Building path from route steps for:', routeName);
-            route.legs.forEach((leg, legIndex) => {
-                leg.steps.forEach((step, stepIndex) => {
-                    if (step.start_location) {
-                        routePath.push(new google.maps.LatLng(
-                            step.start_location.lat(), 
-                            step.start_location.lng()
-                        ));
-                    }
-                    if (step.end_location) {
-                        routePath.push(new google.maps.LatLng(
-                            step.end_location.lat(), 
-                            step.end_location.lng()
-                        ));
-                    }
-                });
-            });
-        }
-        
-        if (routePath.length === 0) {
-            console.error('No route path found for fallback detection:', routeName);
-            return;
-        }
-        
-        // FALLBACK: Add map click listener that checks if click is near the route
-        const mapClickListener = google.maps.event.addListener(map, 'click', (event) => {
-            // Check if click is near this route
-            if (isClickNearRoute(event.latLng, routePath, 20)) { // 20 meter tolerance
-                console.log('🎯 Fallback: Map click detected near route:', routeName);
-                showRouteInstructions(infoWindow, route, routeName, color, event.latLng);
-            }
+            );
         });
         
-        // Store references for cleanup
-        routes.push({ 
-            renderer, 
-            mapListener: mapClickListener,
-            infoWindow,
-            routePath: routePath,
-            isFallback: true
-        });
+        const lat = position.coords.latitude;
+        const lng = position.coords.longitude;
+        console.log(`📍 Got user location: ${lat}, ${lng}`);
         
-        console.log('Fallback click detection added for:', routeName);
+        if (locationStatus) {
+            locationStatus.textContent = '(loading address...)';
+        }
+        
+        // Reverse geocode to get address
+        await reverseGeocodeAndSetAddress(lat, lng);
         
     } catch (error) {
-        console.error('Error in fallback click detection:', error);
+        console.log('❌ Geolocation error:', error.message);
+        console.log('🔄 Falling back to default address');
+        
+        if (locationStatus) {
+            locationStatus.textContent = '(location denied)';
+            locationStatus.style.color = '#ff6b6b';
+        }
+        
+        setDefaultAddress();
     }
+}
+
+// Reverse geocode coordinates to address using Google Maps API
+async function reverseGeocodeAndSetAddress(lat, lng) {
+    try {
+        const geocoder = new google.maps.Geocoder();
+        const latlng = { lat: lat, lng: lng };
+        
+        const result = await new Promise((resolve, reject) => {
+            geocoder.geocode({ location: latlng }, (results, status) => {
+                if (status === 'OK') {
+                    resolve(results);
+                } else {
+                    reject(new Error(`Geocoding failed: ${status}`));
+                }
+            });
+        });
+        
+        if (result && result.length > 0) {
+            const address = result[0].formatted_address;
+            console.log(`📍 Reverse geocoded address: ${address}`);
+            
+            // Set the address in the input field
+            const address1Input = document.getElementById('address1');
+            const locationStatus = document.getElementById('locationStatus');
+            
+            if (address1Input) {
+                address1Input.value = address;
+                address1Input.placeholder = 'Current location detected';
+                console.log('✅ Current address loaded into Address 1 field');
+            }
+            
+            if (locationStatus) {
+                locationStatus.textContent = '(current location)';
+                locationStatus.style.color = '#34a853';
+            }
+        } else {
+            console.log('❌ No address found for coordinates');
+            setDefaultAddress();
+        }
+    } catch (error) {
+        console.error('❌ Reverse geocoding error:', error);
+        setDefaultAddress();
+    }
+}
+
+// Set a default address when geolocation fails
+function setDefaultAddress() {
+    console.log('🏠 Setting default address for Address 1');
+    const address1Input = document.getElementById('address1');
+    const locationStatus = document.getElementById('locationStatus');
+    
+    if (address1Input) {
+        // Use a popular default location (Times Square, NYC)
+        address1Input.value = 'Times Square, New York, NY';
+        address1Input.placeholder = 'Start typing for suggestions...';
+        console.log('✅ Default address set');
+    }
+    
+    if (locationStatus) {
+        locationStatus.textContent = '(default location)';
+        locationStatus.style.color = '#ff9500';
+    }
+}
+
+// Initialize geolocation when maps are ready
+function initializeLocationDetection() {
+    console.log('🚀 Initializing location detection...');
+    
+    // Wait a bit for the page to fully load
+    setTimeout(() => {
+        getCurrentLocationAndAddress();
+    }, 1000);
 }
 
 // Make functions globally available for the HTML
