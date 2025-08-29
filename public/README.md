@@ -10,39 +10,30 @@ public/
 ├── 🎨 styles/
 │   └── main.css           # Application styles and responsive design
 ├── ⚡ scripts/
-│   └── main.js            # Frontend JavaScript logic
-├── 🧪 test_map.html       # Testing interface for maps
-├── 🐛 debug_map.html      # Debugging interface
-└── 🌐 web_interface.html  # Alternative web interface
+│   └── main.js            # Frontend JavaScript logic (cleaned & optimized)
+└── � README.md           # This documentation
 ```
 
-## 🌐 Pages
+## 🌐 Application
 
 ### `index.html` - Main Application
 - **Purpose**: Primary user interface for finding meeting points
-- **Features**: Address input, map display, business filtering
-- **URL**: http://localhost:8082/
-
-### `web_interface.html` - Alternative Interface  
-- **Purpose**: Alternative UI layout
-- **URL**: http://localhost:8082/web_interface.html
-
-### `test_map.html` - Testing Interface
-- **Purpose**: Map functionality testing and debugging
-- **URL**: http://localhost:8082/test_map.html
-
-### `debug_map.html` - Debug Interface
-- **Purpose**: Advanced debugging and development
-- **URL**: http://localhost:8082/debug_map.html
+- **Features**: 
+  - Address input with validation
+  - Interactive Google Maps integration
+  - Meeting point and alternative location display
+  - Business filtering and discovery
+  - Responsive design for all devices
+- **URL**: http://localhost:5001/
 
 ## 🎨 Styles (`styles/main.css`)
 
 **Key Features:**
-- 📱 **Responsive Design**: Mobile-first approach
-- 🎨 **Modern UI**: Clean, intuitive interface
-- 🗺️ **Map Integration**: Optimized for Google Maps
-- 🔘 **Interactive Elements**: Hover effects, transitions
-- 📊 **Business Filters**: Styled category toggles
+- 📱 **Responsive Design**: Mobile-first approach with breakpoints
+- 🎨 **Modern UI**: Clean, intuitive interface with smooth transitions
+- 🗺️ **Map Integration**: Optimized layout for Google Maps
+- 🔘 **Interactive Elements**: Hover effects and user feedback
+- 📊 **Business Filters**: Styled category toggles and controls
 
 **CSS Organization:**
 ```css
@@ -56,85 +47,98 @@ public/
 
 ## ⚡ Scripts (`scripts/main.js`)
 
+**Recent Cleanup**: Reduced from 1266 lines to ~320 lines (75% reduction!)
+
 **Key Components:**
-- 🗺️ **Map Initialization**: Google Maps setup and configuration
-- 📍 **Geocoding**: Address to coordinates conversion
-- 🎯 **Meeting Point Finder**: API integration for optimal locations
-- 🏢 **Business Discovery**: Nearby places and filtering
-- 🔄 **Real-time Updates**: Dynamic content updates
+- 🗺️ **Map Initialization**: Clean Google Maps setup with Places API
+- 🎯 **Meeting Point Display**: Optimal and alternative location markers
+- 🏢 **Business Discovery**: Nearby places with interactive InfoWindows
+- 🖱️ **Click Handling**: Unified popup system for all map elements
+- � **POI Integration**: Custom InfoWindows for Google Places
+- 🔄 **API Integration**: Streamlined backend communication
 
 **JavaScript Architecture:**
 ```javascript
-// Configuration and constants
+// Configuration
 const API_BASE = 'http://localhost:5001';
 
-// Map management
-function initMaps() { /* Google Maps initialization */ }
-
-// API communication
-async function findMeetingPoint() { /* API calls */ }
-
-// Business filtering
-function updateBusinessFilters() { /* Filter logic */ }
-
-// UI updates
-function displayResults() { /* DOM manipulation */ }
+// Core Functions
+initMaps()              // Google Maps initialization
+displayResultsOnMap()   // Show meeting points and routes
+displayBusinesses()     // Show nearby businesses
+closeAllInfoWindows()   // Unified popup management
+checkApiStatus()        // Backend connectivity
 ```
+
+**Removed Complexity:**
+- ❌ Complex route click detection with invisible polylines
+- ❌ Excessive debug logging and test functions
+- ❌ Unnecessary fallback mechanisms
+- ❌ Debug buttons and development utilities
 
 ## 🔗 API Integration
 
 The frontend communicates with the Flask API server at **http://localhost:5001**:
 
-- **Geocoding**: Convert addresses to coordinates
-- **Meeting Points**: Find optimal locations
-- **Business Data**: Nearby places and amenities
+- **`/api/health`**: Server status check
+- **`/api/find-meeting-point`**: Find optimal meeting locations
+- **`/api/config`**: Google Maps API key configuration
+
+## 🎯 Interactive Features
+
+**Map Interactions:**
+- **Meeting Point Markers**: Click to view details (travel times, ratings)
+- **Alternative Markers**: Numbered alternatives with info popups
+- **Business Markers**: Nearby restaurants, cafes, attractions
+- **POI Markers**: Google Places with custom InfoWindows
+- **Routes**: Visual transit routes between addresses and meeting point
+
+**Popup Behavior:**
+- ✅ Click any marker → InfoWindow opens
+- ✅ Click elsewhere on map → All popups close
+- ✅ No close buttons needed (map-click-to-close)
+- ✅ Consistent behavior across all marker types
 
 ## 📱 Responsive Design
 
 **Breakpoints:**
-- 📱 Mobile: < 768px
-- 💻 Tablet: 768px - 1024px  
-- 🖥️ Desktop: > 1024px
-
-**Features:**
-- Collapsible sidebars on mobile
-- Responsive map sizing
-- Touch-friendly controls
-- Optimized loading for mobile networks
+- 📱 **Mobile**: < 768px (collapsible sidebar, touch-friendly)
+- 💻 **Tablet**: 768px - 1024px (optimized layout)
+- 🖥️ **Desktop**: > 1024px (full sidebar visible)
 
 ## 🛠️ Development
 
 **File Serving:**
-- Static files served by `server/serve_map.py`
-- Available at http://localhost:8082
-- Auto-reload on file changes (development mode)
+- Static files served by Flask backend
+- Available at http://localhost:5001
+- No separate static server needed
 
-**Editing Guidelines:**
-- Maintain responsive design principles
-- Follow existing CSS organization
-- Use semantic HTML structure
-- Keep JavaScript modular and documented
+**Code Quality:**
+- Clean, maintainable JavaScript (75% size reduction)
+- Consistent error handling
+- Semantic HTML structure
+- Modular CSS organization
 
 ## 🔧 Configuration
 
-**Google Maps API:**
-- API key loaded from environment
-- Maps JavaScript API required
-- Places API for business discovery
+**Google Maps API Requirements:**
+- Maps JavaScript API
+- Places API (for POI details)
+- Geometry Library (for route calculations)
 
 **Backend Integration:**
 - API calls to http://localhost:5001
-- CORS enabled for cross-origin requests
-- Error handling for API failures
+- CORS enabled for development
+- Graceful error handling for API failures
 
 ## 🐛 Debugging
 
 **Browser Developer Tools:**
-- Console logs for API responses
+- Console logs for API responses and errors
 - Network tab for request monitoring
-- Elements tab for CSS debugging
+- Elements tab for CSS and layout debugging
 
-**Debug Pages:**
-- `debug_map.html` - Advanced debugging
-- `test_map.html` - Feature testing
-- Browser console shows detailed logs
+**Error Handling:**
+- API connection status indicator
+- User-friendly error messages
+- Fallback behavior for API failures
