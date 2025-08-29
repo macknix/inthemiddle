@@ -84,7 +84,7 @@
     </div>
 
     <!-- Scripts -->
-    <script src="scripts/main.js"></script>
+    <script src="scripts/main.js?v=2"></script>
     
     <!-- Load Google Maps API dynamically with key from backend -->
     <script>
@@ -96,7 +96,7 @@
                     const script = document.createElement('script');
                     script.async = true;
                     script.defer = true;
-                    script.src = `https://maps.googleapis.com/maps/api/js?key=${config.data.googleMapsApiKey}&callback=initMaps`;
+                    script.src = `https://maps.googleapis.com/maps/api/js?key=${config.data.googleMapsApiKey}&libraries=geometry,places&callback=initMaps`;
                     script.onerror = () => {
                         console.error('Failed to load Google Maps API');
                         document.body.innerHTML += '<div style="position: fixed; top: 10px; right: 10px; background: #f44336; color: white; padding: 10px; border-radius: 4px;">❌ Google Maps API failed to load</div>';
