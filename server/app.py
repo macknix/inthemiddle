@@ -2,6 +2,8 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
 import os
+import logging
+import json
 try:
     from .maps_service import GoogleMapsService, MiddlePointFinder
 except ImportError:
@@ -10,20 +12,37 @@ except ImportError:
 # Load environment variables
 load_dotenv()
 
+# Configure logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('app.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
 
 # Initialize services
 api_key = os.getenv('GOOGLE_MAPS_API_KEY')
+logger.info(f"API Key found: {'Yes' if api_key and api_key != 'your_api_key_here' else 'No'}")
+
 if not api_key or api_key == "your_api_key_here":
+    logger.warning("GOOGLE_MAPS_API_KEY not found or not configured in environment variables")
     print("Warning: GOOGLE_MAPS_API_KEY not found or not configured in environment variables")
     maps_service = None
     middle_point_finder = None
 else:
     try:
+        logger.info("Initializing Google Maps service...")
         maps_service = GoogleMapsService(api_key)
         middle_point_finder = MiddlePointFinder(maps_service)
+        logger.info("Google Maps service initialized successfully")
     except ValueError as e:
+        logger.error(f"Error initializing Google Maps service: {e}")
         print(f"Error initializing Google Maps service: {e}")
         maps_service = None
         middle_point_finder = None
@@ -50,29 +69,41 @@ def geocode_address():
     Geocode a single address
     Expected JSON: {"address": "123 Main St, City, State"}
     """
+    logger.info("=== GEOCODE REQUEST ===")
+    
     if not maps_service:
+        logger.error("Google Maps API key not configured - cannot geocode")
         return jsonify({'error': 'Google Maps API key not configured'}), 500
     
     try:
         data = request.get_json()
+        logger.info(f"Geocode request data: {json.dumps(data, indent=2) if data else 'None'}")
+        
         if not data or 'address' not in data:
+            logger.error("Address not provided in request")
             return jsonify({'error': 'Address is required'}), 400
         
         address = data['address']
+        logger.info(f"Attempting to geocode address: '{address}'")
+        
         result = maps_service.geocode_address(address)
+        logger.info(f"Geocoding result: {result}")
         
         if result:
+            logger.info(f"Geocoding successful - lat: {result.get('lat')}, lng: {result.get('lng')}")
             return jsonify({
                 'success': True,
                 'data': result
             })
         else:
+            logger.warning(f"Failed to geocode address: '{address}'")
             return jsonify({
                 'success': False,
                 'error': 'Could not geocode the provided address'
             }), 404
             
     except Exception as e:
+        logger.error(f"Exception in geocode_address: {str(e)}", exc_info=True)
         return jsonify({'error': f'Server error: {str(e)}'}), 500
 
 
@@ -86,30 +117,56 @@ def find_middle_point():
         "search_radius": 2000  // optional, defaults to 2000 meters
     }
     """
+    logger.info("=== FIND MIDDLE POINT REQUEST ===")
+    
     if not middle_point_finder:
+        logger.error("Google Maps API key not configured - cannot process request")
         return jsonify({'error': 'Google Maps API key not configured'}), 500
     
     try:
         data = request.get_json()
+        logger.info(f"Request data received: {json.dumps(data, indent=2) if data else 'None'}")
+        
         if not data:
+            logger.error("No JSON data provided in request")
             return jsonify({'error': 'JSON data is required'}), 400
         
         address1 = data.get('address1')
         address2 = data.get('address2')
         search_radius = data.get('search_radius', 2000)
         
+        logger.info(f"Parsed inputs:")
+        logger.info(f"  - Address 1: {address1}")
+        logger.info(f"  - Address 2: {address2}")
+        logger.info(f"  - Search Radius: {search_radius}")
+        
         if not address1 or not address2:
+            logger.error("Missing required addresses")
             return jsonify({'error': 'Both address1 and address2 are required'}), 400
         
         # Validate search radius
         if not isinstance(search_radius, int) or search_radius < 100 or search_radius > 10000:
+            logger.error(f"Invalid search radius: {search_radius}")
             return jsonify({'error': 'search_radius must be between 100 and 10000 meters'}), 400
         
+        logger.info("Starting middle point calculation...")
         result = middle_point_finder.find_optimal_meeting_point(
             address1, 
             address2, 
             search_radius
         )
+        logger.info(f"Middle point calculation completed")
+        logger.info(f"Result success: {result.get('success', False)}")
+        
+        if result.get('success'):
+            logger.info(f"Successful result keys: {list(result.keys())}")
+            if 'data' in result and 'meeting_point' in result['data']:
+                meeting_point = result['data']['meeting_point']
+                logger.info(f"Meeting point coordinates: lat={meeting_point.get('lat')}, lng={meeting_point.get('lng')}")
+        else:
+            logger.error(f"Algorithm failed: {result.get('error', 'Unknown error')}")
+        
+        logger.info("=== END FIND MIDDLE POINT REQUEST ===")
         
         if result['success']:
             return jsonify(result)
@@ -117,6 +174,7 @@ def find_middle_point():
             return jsonify(result), 400
             
     except Exception as e:
+        logger.error(f"Exception in find_middle_point: {str(e)}", exc_info=True)
         return jsonify({'error': f'Server error: {str(e)}'}), 500
 
 

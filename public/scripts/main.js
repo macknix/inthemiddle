@@ -1,6 +1,6 @@
 const API_BASE = 'http://localhost:5001';
-let map, map1, map2;
-let directionsService, directionsRenderer1, directionsRenderer2;
+let map;
+let directionsService;
 let currentData = null;
 let markers = [];
 let businessMarkers = [];
@@ -22,42 +22,26 @@ const businessIcons = {
 
 // Initialize maps when Google Maps API is loaded
 function initMaps() {
+    console.log('Initializing Google Maps...');
+    
+    // Check if map element exists
+    const mapElement = document.getElementById('map');
+    if (!mapElement) {
+        console.error('Map element not found!');
+        return;
+    }
+    
     // Main overview map
-    map = new google.maps.Map(document.getElementById('map'), {
+    map = new google.maps.Map(mapElement, {
         zoom: 13,
         center: { lat: 40.7128, lng: -74.0060 }, // Default to NYC
         mapTypeId: 'roadmap'
     });
     
-    // Route maps
-    map1 = new google.maps.Map(document.getElementById('mapRoute1'), {
-        zoom: 13,
-        center: { lat: 40.7128, lng: -74.0060 },
-        mapTypeId: 'roadmap'
-    });
-    
-    map2 = new google.maps.Map(document.getElementById('mapRoute2'), {
-        zoom: 13,
-        center: { lat: 40.7128, lng: -74.0060 },
-        mapTypeId: 'roadmap'
-    });
-    
     // Initialize directions service
     directionsService = new google.maps.DirectionsService();
-    directionsRenderer1 = new google.maps.DirectionsRenderer({
-        map: map1,
-        polylineOptions: {
-            strokeColor: '#4285f4',
-            strokeWeight: 6
-        }
-    });
-    directionsRenderer2 = new google.maps.DirectionsRenderer({
-        map: map2,
-        polylineOptions: {
-            strokeColor: '#ea4335',
-            strokeWeight: 6
-        }
-    });
+    
+    console.log('Google Maps initialized successfully');
     
     checkApiStatus();
 }
@@ -135,14 +119,10 @@ function createWalkingCircles(center) {
     });
 }
 
-// Clear all routes from the route maps
+// Clear all routes (placeholder for future route functionality)
 function clearRoutes() {
-    if (directionsRenderer1) {
-        directionsRenderer1.setDirections({routes: []});
-    }
-    if (directionsRenderer2) {
-        directionsRenderer2.setDirections({routes: []});
-    }
+    // No route renderers to clear in simplified version
+    console.log('Routes cleared');
 }
 
 // Display results on map
@@ -454,36 +434,6 @@ function applyFilters() {
     }
 }
 
-// Tab switching
-document.getElementById('overviewTab').addEventListener('click', () => {
-    document.getElementById('overviewTab').classList.add('active');
-    document.getElementById('routesTab').classList.remove('active');
-    
-    document.getElementById('mapsContainer').className = 'maps-container single-map';
-    document.getElementById('map').style.display = 'block';
-    document.getElementById('mapRoute1').style.display = 'none';
-    document.getElementById('mapRoute2').style.display = 'none';
-});
-
-document.getElementById('routesTab').addEventListener('click', () => {
-    document.getElementById('routesTab').classList.add('active');
-    document.getElementById('overviewTab').classList.remove('active');
-    
-    document.getElementById('mapsContainer').className = 'maps-container split-map';
-    document.getElementById('map').style.display = 'none';
-    document.getElementById('mapRoute1').style.display = 'block';
-    document.getElementById('mapRoute2').style.display = 'block';
-    
-    // Trigger resize
-    setTimeout(() => {
-        google.maps.event.trigger(map1, 'resize');
-        google.maps.event.trigger(map2, 'resize');
-        if (currentData) {
-            displayRoutes(currentData);
-        }
-    }, 100);
-});
-
 // Form submission
 document.getElementById('searchForm').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -491,7 +441,12 @@ document.getElementById('searchForm').addEventListener('submit', async (e) => {
     const address1 = document.getElementById('address1').value.trim();
     const address2 = document.getElementById('address2').value.trim();
     
+    console.log('=== FRONTEND: Form submitted ===');
+    console.log('Address 1:', address1);
+    console.log('Address 2:', address2);
+    
     if (!address1 || !address2) {
+        console.log('ERROR: Missing addresses');
         alert('Please enter both addresses');
         return;
     }
@@ -512,22 +467,32 @@ document.getElementById('searchForm').addEventListener('submit', async (e) => {
     closeAllInfoWindows();
     clearWalkingCircles();
     
+    const requestData = {
+        address1: address1,
+        address2: address2,
+        search_radius: 2000  // Fixed radius since we're not using the input anymore
+    };
+    
+    console.log('Request data:', requestData);
+    console.log('API URL:', `${API_BASE}/api/find-middle-point`);
+    
     try {
+        console.log('Sending request...');
         const response = await fetch(`${API_BASE}/api/find-middle-point`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({
-                address1: address1,
-                address2: address2,
-                search_radius: 2000  // Fixed radius since we're not using the input anymore
-            })
+            body: JSON.stringify(requestData)
         });
         
+        console.log('Response received:', response.status, response.statusText);
+        
         const result = await response.json();
+        console.log('Response data:', result);
         
         if (response.ok && result.success) {
+            console.log('SUCCESS: Request completed successfully');
             currentData = result.data;
             displayResultsOnMap(result.data);
             
@@ -545,6 +510,7 @@ document.getElementById('searchForm').addEventListener('submit', async (e) => {
                 `;
             }
         } else {
+            console.log('ERROR: Request failed with result:', result);
             resultsDiv.innerHTML = `
                 <div class="error">
                     ❌ Error: ${result.error || 'Unknown error occurred'}
@@ -553,15 +519,18 @@ document.getElementById('searchForm').addEventListener('submit', async (e) => {
         }
         
     } catch (error) {
+        console.log('NETWORK ERROR:', error);
         resultsDiv.innerHTML = `
             <div class="error">
                 ❌ Network error: ${error.message}
             </div>
         `;
     } finally {
+        console.log('Resetting UI state');
         loadingDiv.style.display = 'none';
         searchBtn.disabled = false;
         searchBtn.textContent = '🚇 Find Meeting Point';
+        console.log('=== FRONTEND: Request completed ===');
     }
 });
 
