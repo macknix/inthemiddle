@@ -23,6 +23,29 @@ const businessIcons = {
     library: '📚'
 };
 
+// Transport mode icons mapping
+const transportIcons = {
+    'BUS': '🚌',
+    'SUBWAY': '🚇',
+    'TRAIN': '🚂',
+    'TRAM': '🚊',
+    'RAIL': '🚆',
+    'METRO_RAIL': '🚇',
+    'MONORAIL': '🚝',
+    'HEAVY_RAIL': '🚆',
+    'COMMUTER_TRAIN': '🚆',
+    'HIGH_SPEED_TRAIN': '🚄',
+    'LONG_DISTANCE_TRAIN': '🚂',
+    'WALKING': '🚶',
+    'DRIVING': '🚗',
+    'BICYCLING': '🚴',
+    'FERRY': '⛴️',
+    'CABLE_CAR': '🚠',
+    'GONDOLA_LIFT': '🚡',
+    'FUNICULAR': '🚟',
+    'OTHER': '🚌' // Default fallback
+};
+
 // Initialize maps when Google Maps API is loaded
 function initMaps() {
     console.log('Initializing Google Maps...');
@@ -52,61 +75,42 @@ function initMaps() {
         const currentTime = Date.now();
         
         // Debounce rapid clicks
-        if (currentTime - lastMapClickTime < 100) {
+        if (currentTime - lastMapClickTime < 50) { // Reduced from 100ms to 50ms
             return;
         }
         lastMapClickTime = currentTime;
         
-        console.log('🗺️ Map click detected!');
-        console.log('  - event.placeId:', event.placeId);
-        console.log('  - routeClickedRecently:', routeClickedRecently);
-        console.log('  - markerClickedRecently:', markerClickedRecently);
-        console.log('  - openInfoWindows.length:', openInfoWindows.length);
-        console.log('  - openInfoWindows IDs:', openInfoWindows.map(w => w._debugId || 'no-id'));
-        
         // Handle POI clicks - prevent default and create our own InfoWindow
         if (event.placeId) {
-            console.log('🏛️ POI clicked with placeId:', event.placeId);
-            
             // Prevent Google's default InfoWindow from opening
             event.stop();
             
             markerClickedRecently = true;
             setTimeout(() => { markerClickedRecently = false; }, 200);
             
-            // Close our existing InfoWindows first
+            // Close existing InfoWindows first
             closeAllInfoWindows();
             
-            // Create our own POI InfoWindow using Places service
+            // Fetch place details directly without loading indicator
             const service = new google.maps.places.PlacesService(map);
             service.getDetails({
                 placeId: event.placeId,
                 fields: ['name', 'formatted_address', 'rating', 'user_ratings_total', 'types', 'website']
             }, (place, status) => {
                 if (status === google.maps.places.PlacesServiceStatus.OK && place) {
+                    // Create optimized content using template literals
+                    const content = createPOIContent(place);
+                    
                     const poiInfoWindow = new google.maps.InfoWindow({
-                        content: `
-                            <div style="padding: 10px; max-width: 250px;">
-                                <h4 style="margin: 0 0 8px 0; color: #1a73e8;">🏛️ ${place.name}</h4>
-                                <p style="margin: 0 0 5px 0; font-size: 13px;"><strong>📍 Address:</strong> ${place.formatted_address || 'N/A'}</p>
-                                ${place.rating ? `<p style="margin: 0 0 5px 0; font-size: 13px;"><strong>⭐ Rating:</strong> ${place.rating}/5 (${place.user_ratings_total || 0} reviews)</p>` : ''}
-                                ${place.types ? `<p style="margin: 0 0 5px 0; font-size: 13px;"><strong>🏷️ Type:</strong> ${place.types[0].replace(/_/g, ' ')}</p>` : ''}
-                                ${place.website ? `<p style="margin: 0; font-size: 13px;"><strong>🌐 Website:</strong> <a href="${place.website}" target="_blank">Visit</a></p>` : ''}
-                            </div>
-                        `,
+                        content,
                         position: event.latLng
                     });
                     
-                    // Add debug ID and track it
                     poiInfoWindow._debugId = `poi-${event.placeId}`;
                     poiInfoWindow.open(map);
                     openInfoWindows.push(poiInfoWindow);
-                    
-                    console.log('📋 Created custom POI InfoWindow:', poiInfoWindow._debugId);
-                    console.log('📋 Current openInfoWindows:', openInfoWindows.length);
-                } else {
-                    console.error('Failed to get place details:', status);
                 }
+                // Silently fail if place details can't be loaded
             });
             
             return;
@@ -114,15 +118,7 @@ function initMaps() {
         
         // Handle regular map clicks (empty space)
         if (!routeClickedRecently && !markerClickedRecently) {
-            console.log('✅ Closing all InfoWindows due to empty map click');
             closeAllInfoWindows();
-            console.log('  - After closing, openInfoWindows.length:', openInfoWindows.length);
-        } else {
-            console.log('❌ Not closing popups:', {
-                routeClickedRecently,
-                markerClickedRecently,
-                openInfoWindowsCount: openInfoWindows.length
-            });
         }
     });
     
@@ -190,32 +186,25 @@ function clearMarkers() {
 
 // Clear business markers specifically
 function clearBusinessMarkers() {
-    console.log('🧹 Clearing business markers. Current openInfoWindows:', openInfoWindows.length);
-    
     // Close and remove any business-related InfoWindows from tracking
     const businessInfoWindows = openInfoWindows.filter(w => w._debugId && w._debugId.startsWith('business-'));
-    businessInfoWindows.forEach(infoWindow => {
-        console.log('🧹 Closing business InfoWindow:', infoWindow._debugId);
-        infoWindow.close();
-    });
+    businessInfoWindows.forEach(infoWindow => infoWindow.close());
     
     // Remove business InfoWindows from the tracking array
     openInfoWindows = openInfoWindows.filter(w => !w._debugId || !w._debugId.startsWith('business-'));
     
     // Clear the actual markers
     businessMarkers.forEach(marker => marker.setMap(null));
-    businessMarkers = [];
-    
-    console.log('🧹 After clearing business markers. Remaining openInfoWindows:', openInfoWindows.length);
-    console.log('🧹 Remaining openInfoWindows IDs:', openInfoWindows.map(w => w._debugId || 'no-id'));
+    businessMarkers.length = 0; // Faster array clearing
 }
 
-// Clear all info windows
+// Clear all info windows (optimized)
 function closeAllInfoWindows() {
-    openInfoWindows.forEach(infoWindow => {
-        infoWindow.close();
-    });
-    openInfoWindows = [];
+    // Batch close all InfoWindows for better performance
+    for (let i = openInfoWindows.length - 1; i >= 0; i--) {
+        openInfoWindows[i].close();
+    }
+    openInfoWindows.length = 0; // Faster array clearing
 }
 
 // Make function available globally for button clicks
@@ -605,8 +594,8 @@ function showRouteInstructions(infoWindow, route, routeName, color, position) {
     closeAllInfoWindows();
     
     let content = `
-        <div style="font-family: Arial, sans-serif; max-width: 350px;">
-            <h3 style="margin: 0 0 10px 0; color: ${color}; font-size: 16px;">
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 380px; color: #202124;">
+            <h3 style="margin: 0 0 12px 0; color: ${color}; font-size: 18px; font-weight: 600;">
                 ${routeName}
             </h3>
     `;
@@ -614,39 +603,66 @@ function showRouteInstructions(infoWindow, route, routeName, color, position) {
     const legs = route.legs;
     let totalDistance = 0;
     let totalDuration = 0;
+    let transportModes = new Set();
     
-    // Calculate totals
+    // Calculate totals and collect transport modes
     legs.forEach(leg => {
         totalDistance += leg.distance.value;
         totalDuration += leg.duration.value;
+        
+        leg.steps.forEach(step => {
+            if (step.transit && step.transit.line && step.transit.line.vehicle) {
+                transportModes.add(step.transit.line.vehicle.type || 'BUS');
+            } else {
+                transportModes.add(step.travel_mode || 'WALKING');
+            }
+        });
     });
     
+    // Create transport mode summary
+    const modeIcons = Array.from(transportModes).map(mode => transportIcons[mode] || '🚶').join(' ');
+    
     content += `
-        <div style="background: #f5f5f5; padding: 8px; border-radius: 4px; margin-bottom: 10px;">
-            <strong>Total Distance:</strong> ${(totalDistance / 1000).toFixed(1)} km<br>
-            <strong>Total Duration:</strong> ${Math.round(totalDuration / 60)} minutes
+        <div style="background: #f8f9fa; padding: 12px; border-radius: 6px; margin-bottom: 14px; border: 1px solid #e1e3e1;">
+            <div style="font-size: 14px; color: #202124; font-weight: 600; margin-bottom: 6px;">📏 Total Distance: ${(totalDistance / 1000).toFixed(1)} km</div>
+            <div style="font-size: 14px; color: #202124; font-weight: 600; margin-bottom: 6px;">⏱️ Total Duration: ${Math.round(totalDuration / 60)} minutes</div>
+            <div style="font-size: 14px; color: #1a73e8; font-weight: 500;">🚌 Transport: ${modeIcons}</div>
         </div>
-        <div style="max-height: 200px; overflow-y: auto;">
+        <div style="max-height: 280px; overflow-y: auto; border-radius: 6px;">
     `;
     
     // Add step-by-step instructions
     legs.forEach((leg, legIndex) => {
         if (legs.length > 1) {
-            content += `<h4 style="margin: 10px 0 5px 0; color: #666;">Leg ${legIndex + 1}</h4>`;
+            content += `<h4 style="margin: 12px 0 6px 0; color: #1a73e8; font-size: 15px; font-weight: 600;">🚶 Leg ${legIndex + 1}</h4>`;
         }
         
         leg.steps.forEach((step, stepIndex) => {
-            const instruction = step.instructions.replace(/<[^>]*>/g, ''); // Remove HTML tags
+            const enhancedStep = formatEnhancedInstruction(step);
             const distance = step.distance.text;
             const duration = step.duration.text;
             
+            // Different styling for transit vs walking steps
+            const bgColor = enhancedStep.isTransit ? '#f0f7ff' : '#f8f9fa';
+            const borderColor = enhancedStep.isTransit ? color : '#e1e3e1';
+            
             content += `
-                <div style="margin-bottom: 8px; padding: 6px; border-left: 3px solid ${color}; background: #fafafa;">
-                    <div style="font-size: 13px; margin-bottom: 2px;">
-                        ${instruction}
+                <div style="margin-bottom: 12px; padding: 10px; border-left: 4px solid ${borderColor}; background: ${bgColor}; border-radius: 0 6px 6px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                    <div style="font-size: 14px; margin-bottom: 6px; color: #202124; line-height: 1.4; font-weight: 500;">
+                        ${enhancedStep.instruction}
                     </div>
-                    <div style="font-size: 11px; color: #666;">
-                        ${distance} • ${duration}
+                    ${enhancedStep.stopDetails ? `
+                        <div style="font-size: 12px; color: #1a73e8; margin-bottom: 4px; font-weight: 500;">
+                            📍 ${enhancedStep.stopDetails}
+                        </div>
+                    ` : ''}
+                    ${enhancedStep.timeDetails ? `
+                        <div style="font-size: 12px; color: #34a853; margin-bottom: 4px;">
+                            ⏰ ${enhancedStep.timeDetails}
+                        </div>
+                    ` : ''}
+                    <div style="font-size: 12px; color: #5f6368; font-weight: 500;">
+                        📏 ${distance} • ⏱️ ${duration}
                     </div>
                 </div>
             `;
@@ -822,13 +838,13 @@ function displayResultsOnMap(data) {
         // Add info window for optimal point
         const meetingPointInfoWindow = new google.maps.InfoWindow({
             content: `
-                <div style="padding: 10px; max-width: 250px;">
-                    <h4 style="margin: 0 0 8px 0; color: #34a853;">🎯 ${optimal.name}</h4>
-                    <p style="margin: 0 0 5px 0; font-size: 13px;"><strong>📍 Address:</strong> ${optimal.formatted_address}</p>
-                    ${optimal.rating ? `<p style="margin: 0 0 5px 0; font-size: 13px;"><strong>⭐ Rating:</strong> ${optimal.rating}/5</p>` : ''}
-                    <p style="margin: 0 0 5px 0; font-size: 13px;"><strong>🚇 From A:</strong> ${Math.round(optimal.time_from_address1/60)} min</p>
-                    <p style="margin: 0 0 5px 0; font-size: 13px;"><strong>🚇 From B:</strong> ${Math.round(optimal.time_from_address2/60)} min</p>
-                    <p style="margin: 0; font-size: 13px;"><strong>⚖️ Difference:</strong> ${optimal.time_difference_minutes} min</p>
+                <div style="padding: 12px; max-width: 280px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+                    <h4 style="margin: 0 0 10px 0; color: #34a853; font-size: 17px; font-weight: 600;">🎯 ${optimal.name}</h4>
+                    <p style="margin: 0 0 6px 0; font-size: 14px; color: #202124; line-height: 1.4;"><strong style="color: #34a853;">📍 Address:</strong> ${optimal.formatted_address}</p>
+                    ${optimal.rating ? `<p style="margin: 0 0 6px 0; font-size: 14px; color: #202124;"><strong style="color: #34a853;">⭐ Rating:</strong> ${optimal.rating}/5</p>` : ''}
+                    <p style="margin: 0 0 6px 0; font-size: 14px; color: #202124;"><strong style="color: #34a853;">🚇 From A:</strong> ${Math.round(optimal.time_from_address1/60)} min</p>
+                    <p style="margin: 0 0 6px 0; font-size: 14px; color: #202124;"><strong style="color: #34a853;">🚇 From B:</strong> ${Math.round(optimal.time_from_address2/60)} min</p>
+                    <p style="margin: 0; font-size: 14px; color: #202124;"><strong style="color: #34a853;">⚖️ Difference:</strong> ${optimal.time_difference_minutes} min</p>
                 </div>
             `
         });
@@ -837,20 +853,13 @@ function displayResultsOnMap(data) {
         meetingPointInfoWindow._debugId = `meeting-point-${optimal.name}`;
         
         optimalMarker.addListener('click', (event) => {
-            console.log('🎯 Meeting point marker clicked:', optimal.name);
-            console.log('🔍 MeetingPointInfoWindow ID:', meetingPointInfoWindow._debugId);
             event.stop(); // Stop event propagation to map
             markerClickedRecently = true;
             setTimeout(() => { markerClickedRecently = false; }, 200);
             
-            console.log('📋 Before opening meeting point popup, openInfoWindows:', openInfoWindows.length);
-            console.log('📋 Current openInfoWindows IDs:', openInfoWindows.map(w => w._debugId || 'no-id'));
             closeAllInfoWindows();
-            console.log('📋 After closeAllInfoWindows, openInfoWindows:', openInfoWindows.length);
             meetingPointInfoWindow.open(map, optimalMarker);
             openInfoWindows.push(meetingPointInfoWindow);
-            console.log('📋 After opening meeting point popup, openInfoWindows:', openInfoWindows.length);
-            console.log('📋 New openInfoWindows IDs:', openInfoWindows.map(w => w._debugId || 'no-id'));
         });
     }
     
@@ -879,6 +888,122 @@ function updateRouteInfo(elementId, routeData) {
     `;
     
     document.getElementById('results').appendChild(routeInfo);
+}
+
+// Extract detailed transit information from a step
+function getTransitDetails(step) {
+    if (!step.transit) {
+        // Non-transit step (walking, etc.)
+        const travelMode = step.travel_mode || 'WALKING';
+        return {
+            icon: transportIcons[travelMode] || '🚶',
+            details: '',
+            shortName: '',
+            headsign: '',
+            agencyName: '',
+            vehicleType: travelMode
+        };
+    }
+    
+    const transit = step.transit;
+    const line = transit.line;
+    const vehicle = line.vehicle;
+    
+    // Get vehicle type and icon
+    const vehicleType = vehicle.type || 'BUS';
+    const icon = transportIcons[vehicleType] || transportIcons['OTHER'];
+    
+    // Get line details
+    const shortName = line.short_name || line.name || '';
+    const longName = line.name || '';
+    const agencyName = line.agencies && line.agencies[0] ? line.agencies[0].name : '';
+    const headsign = transit.headsign || '';
+    
+    // Get stops
+    const departureStop = transit.departure_stop ? transit.departure_stop.name : '';
+    const arrivalStop = transit.arrival_stop ? transit.arrival_stop.name : '';
+    
+    // Build detailed description
+    let details = '';
+    if (shortName) {
+        details += `${shortName}`;
+        if (longName && longName !== shortName) {
+            details += ` (${longName})`;
+        }
+    } else if (longName) {
+        details += longName;
+    }
+    
+    if (headsign) {
+        details += ` towards ${headsign}`;
+    }
+    
+    if (agencyName && !details.includes(agencyName)) {
+        details += ` - ${agencyName}`;
+    }
+    
+    return {
+        icon,
+        details,
+        shortName,
+        headsign,
+        agencyName,
+        vehicleType,
+        departureStop,
+        arrivalStop,
+        departureTime: transit.departure_time ? transit.departure_time.text : '',
+        arrivalTime: transit.arrival_time ? transit.arrival_time.text : '',
+        numStops: transit.num_stops || 0
+    };
+}
+
+// Format enhanced step instruction with transit details
+function formatEnhancedInstruction(step) {
+    const transitDetails = getTransitDetails(step);
+    const baseInstruction = step.instructions.replace(/<[^>]*>/g, ''); // Remove HTML tags
+    
+    if (!step.transit) {
+        // Walking or other non-transit steps
+        return {
+            icon: transitDetails.icon,
+            instruction: baseInstruction,
+            details: '',
+            isTransit: false
+        };
+    }
+    
+    // Transit step - enhance with detailed information
+    let enhancedInstruction = `${transitDetails.icon} `;
+    
+    if (transitDetails.details) {
+        enhancedInstruction += `Take ${transitDetails.details}`;
+    } else {
+        enhancedInstruction += baseInstruction;
+    }
+    
+    // Add stop information
+    let stopDetails = '';
+    if (transitDetails.departureStop && transitDetails.arrivalStop) {
+        stopDetails += `From: ${transitDetails.departureStop} → To: ${transitDetails.arrivalStop}`;
+        if (transitDetails.numStops > 0) {
+            stopDetails += ` (${transitDetails.numStops} stops)`;
+        }
+    }
+    
+    // Add timing information
+    let timeDetails = '';
+    if (transitDetails.departureTime && transitDetails.arrivalTime) {
+        timeDetails = `Depart: ${transitDetails.departureTime} → Arrive: ${transitDetails.arrivalTime}`;
+    }
+    
+    return {
+        icon: transitDetails.icon,
+        instruction: enhancedInstruction,
+        stopDetails,
+        timeDetails,
+        isTransit: true,
+        vehicleType: transitDetails.vehicleType
+    };
 }
 
 // Display businesses on the map
@@ -914,12 +1039,12 @@ function displayBusinesses(businesses) {
                 
                 const businessInfoWindow = new google.maps.InfoWindow({
                     content: `
-                        <div style="padding: 8px; max-width: 200px;">
-                            <h5 style="margin: 0 0 5px 0; color: #667eea;">${icon} ${place.name}</h5>
-                            <p style="margin: 0 0 5px 0; font-size: 12px;"><strong>Category:</strong> ${category.replace('_', ' ')}</p>
-                            <p style="margin: 0 0 5px 0; font-size: 12px;"><strong>Address:</strong> ${place.formatted_address || place.vicinity || 'N/A'}</p>
-                            ${place.rating ? `<p style="margin: 0 0 5px 0; font-size: 12px;"><strong>Rating:</strong> ${place.rating}/5 ⭐</p>` : ''}
-                            ${place.price_level ? `<p style="margin: 0; font-size: 12px;"><strong>Price:</strong> ${'$'.repeat(place.price_level)}</p>` : ''}
+                        <div style="padding: 12px; max-width: 220px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+                            <h5 style="margin: 0 0 8px 0; color: #667eea; font-size: 16px; font-weight: 600;">${icon} ${place.name}</h5>
+                            <p style="margin: 0 0 6px 0; font-size: 13px; color: #202124;"><strong style="color: #667eea;">📂 Category:</strong> ${category.replace('_', ' ')}</p>
+                            <p style="margin: 0 0 6px 0; font-size: 13px; color: #202124; line-height: 1.4;"><strong style="color: #667eea;">📍 Address:</strong> ${place.formatted_address || place.vicinity || 'N/A'}</p>
+                            ${place.rating ? `<p style="margin: 0 0 6px 0; font-size: 13px; color: #202124;"><strong style="color: #667eea;">⭐ Rating:</strong> ${place.rating}/5 ⭐</p>` : ''}
+                            ${place.price_level ? `<p style="margin: 0; font-size: 13px; color: #202124;"><strong style="color: #667eea;">💰 Price:</strong> ${'$'.repeat(place.price_level)}</p>` : ''}
                         </div>
                     `
                 });
@@ -928,23 +1053,13 @@ function displayBusinesses(businesses) {
                 businessInfoWindow._debugId = `business-${category}-${place.name}`;
                 
                 marker.addListener('click', (event) => {
-                    console.log('🏪 Business marker clicked:', place.name);
-                    console.log('🔍 BusinessInfoWindow ID:', businessInfoWindow._debugId);
                     event.stop(); // Stop event propagation to map
                     markerClickedRecently = true;
-                    setTimeout(() => { 
-                        markerClickedRecently = false;
-                        console.log('⏰ markerClickedRecently flag reset');
-                    }, 200);
+                    setTimeout(() => { markerClickedRecently = false; }, 200);
                     
-                    console.log('📋 Before opening business popup, openInfoWindows:', openInfoWindows.length);
-                    console.log('📋 Current openInfoWindows IDs:', openInfoWindows.map(w => w._debugId || 'no-id'));
                     closeAllInfoWindows();
-                    console.log('📋 After closeAllInfoWindows, openInfoWindows:', openInfoWindows.length);
                     businessInfoWindow.open(map, marker);
                     openInfoWindows.push(businessInfoWindow);
-                    console.log('📋 After opening business popup, openInfoWindows:', openInfoWindows.length);
-                    console.log('📋 New openInfoWindows IDs:', openInfoWindows.map(w => w._debugId || 'no-id'));
                 });
             }
         });
@@ -1440,6 +1555,40 @@ function initializeLocationDetection() {
     setTimeout(() => {
         getCurrentLocationAndAddress();
     }, 1000);
+}
+
+// Optimized POI content creation function
+function createPOIContent(place) {
+    const name = place.name || 'Unknown Place';
+    const address = place.formatted_address || 'N/A';
+    const rating = place.rating;
+    const totalRatings = place.user_ratings_total || 0;
+    const type = place.types && place.types[0] ? place.types[0].replace(/_/g, ' ') : null;
+    const website = place.website;
+    
+    // Pre-build content sections for better performance
+    const sections = [
+        `<h4 style="margin: 0 0 10px 0; color: #1a73e8; font-size: 16px; font-weight: 600;">🏛️ ${name}</h4>`,
+        `<p style="margin: 0 0 6px 0; font-size: 14px; color: #202124; line-height: 1.4;"><strong style="color: #1a73e8;">📍 Address:</strong> ${address}</p>`
+    ];
+    
+    if (rating) {
+        sections.push(`<p style="margin: 0 0 6px 0; font-size: 14px; color: #202124;"><strong style="color: #1a73e8;">⭐ Rating:</strong> ${rating}/5 (${totalRatings} reviews)</p>`);
+    }
+    
+    if (type) {
+        sections.push(`<p style="margin: 0 0 6px 0; font-size: 14px; color: #202124;"><strong style="color: #1a73e8;">🏷️ Type:</strong> ${type}</p>`);
+    }
+    
+    if (website) {
+        sections.push(`<p style="margin: 0; font-size: 14px; color: #202124;"><strong style="color: #1a73e8;">🌐 Website:</strong> <a href="${website}" target="_blank" style="color: #1a73e8; text-decoration: none;">Visit</a></p>`);
+    }
+    
+    return `
+        <div style="padding: 12px; max-width: 280px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+            ${sections.join('')}
+        </div>
+    `;
 }
 
 // Make functions globally available for the HTML
