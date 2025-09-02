@@ -4,6 +4,9 @@ from typing import Dict, List, Tuple, Optional
 from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
 import math
+import asyncio
+import concurrent.futures
+from functools import partial
 
 
 class GoogleMapsService:
@@ -14,6 +17,12 @@ class GoogleMapsService:
             raise ValueError("Valid Google Maps API key is required")
         self.client = googlemaps.Client(key=api_key)
         self.geocoder = Nominatim(user_agent="meet-in-the-middle")
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=10)
+    
+    def cleanup(self):
+        """Clean up resources"""
+        if hasattr(self, 'executor'):
+            self.executor.shutdown(wait=True)
     
     def geocode_address(self, address: str) -> Optional[Dict]:
         """
@@ -100,18 +109,57 @@ class GoogleMapsService:
 
     def get_places_by_category(self, location: Dict, radius: int = 1000, categories: List[str] = None) -> Dict[str, List[Dict]]:
         """
-        Get places categorized by type
+        Get places categorized by type (optimized with parallel execution)
         """
         if categories is None:
             categories = ['restaurant', 'cafe', 'bar', 'shopping_mall', 'park', 'tourist_attraction']
         
-        categorized_places = {}
+        # Use asyncio to run category searches in parallel
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(self._get_places_by_category_parallel(location, radius, categories))
+        finally:
+            loop.close()
+    
+    async def _get_places_by_category_parallel(self, location: Dict, radius: int, categories: List[str]) -> Dict[str, List[Dict]]:
+        """Internal method to run category searches in parallel"""
+        tasks = [
+            self.find_places_nearby_async(location, radius, category)
+            for category in categories
+        ]
         
-        for category in categories:
-            places = self.find_places_nearby(location, radius, category)
-            categorized_places[category] = places
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        categorized_places = {}
+        for i, category in enumerate(categories):
+            if i < len(results) and not isinstance(results[i], Exception):
+                categorized_places[category] = results[i]
+            else:
+                categorized_places[category] = []
         
         return categorized_places
+
+    # Async wrapper methods for parallel execution
+    async def geocode_address_async(self, address: str) -> Optional[Dict]:
+        """Async wrapper for geocode_address"""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(self.executor, self.geocode_address, address)
+    
+    async def get_transit_time_async(self, origin: Dict, destination: Dict, departure_time=None) -> Optional[int]:
+        """Async wrapper for get_transit_time"""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(self.executor, self.get_transit_time, origin, destination, departure_time)
+    
+    async def find_places_nearby_async(self, location: Dict, radius: int = 1000, place_type: str = "point_of_interest") -> List[Dict]:
+        """Async wrapper for find_places_nearby"""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(self.executor, self.find_places_nearby, location, radius, place_type)
+    
+    async def get_places_by_category_async(self, location: Dict, radius: int = 1000, categories: List[str] = None) -> Dict[str, List[Dict]]:
+        """Async wrapper for get_places_by_category"""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(self.executor, self.get_places_by_category, location, radius, categories)
 
 
 class MiddlePointFinder:
@@ -137,6 +185,19 @@ class MiddlePointFinder:
     def find_optimal_meeting_point(self, address1: str, address2: str, search_radius: int = 2000) -> Dict:
         """
         Find the optimal meeting point by transit time between two addresses
+        Uses async parallel execution for better performance
+        """
+        # Run the async version and return the result
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(self.find_optimal_meeting_point_async(address1, address2, search_radius))
+        finally:
+            loop.close()
+    
+    async def find_optimal_meeting_point_async(self, address1: str, address2: str, search_radius: int = 2000) -> Dict:
+        """
+        Async version of find_optimal_meeting_point with parallel API calls
         """
         result = {
             'success': False,
@@ -145,9 +206,12 @@ class MiddlePointFinder:
         }
         
         try:
-            # Geocode both addresses
-            location1 = self.maps_service.geocode_address(address1)
-            location2 = self.maps_service.geocode_address(address2)
+            # Geocode both addresses in parallel
+            geocode_tasks = [
+                self.maps_service.geocode_address_async(address1),
+                self.maps_service.geocode_address_async(address2)
+            ]
+            location1, location2 = await asyncio.gather(*geocode_tasks)
             
             if not location1:
                 result['error'] = f"Could not geocode address: {address1}"
@@ -160,64 +224,81 @@ class MiddlePointFinder:
             # Calculate geographic midpoint as starting point
             geographic_midpoint = self.calculate_geographic_midpoint(location1, location2)
             
-            # Get transit times from both locations to geographic midpoint
-            time1_to_mid = self.maps_service.get_transit_time(location1, geographic_midpoint)
-            time2_to_mid = self.maps_service.get_transit_time(location2, geographic_midpoint)
+            # Run multiple API calls in parallel
+            parallel_tasks = [
+                # Transit times to midpoint
+                self.maps_service.get_transit_time_async(location1, geographic_midpoint),
+                self.maps_service.get_transit_time_async(location2, geographic_midpoint),
+                # Places search
+                self.maps_service.find_places_nearby_async(
+                    geographic_midpoint, 
+                    radius=search_radius,
+                    place_type="establishment"
+                ),
+                # Categorized businesses search
+                self.maps_service.get_places_by_category_async(
+                    geographic_midpoint,
+                    radius=search_radius,
+                    categories=['restaurant', 'cafe', 'bar', 'shopping_mall', 'store', 'park', 'tourist_attraction', 'gym', 'library']
+                )
+            ]
             
-            # Find nearby places around the geographic midpoint
-            nearby_places = self.maps_service.find_places_nearby(
-                geographic_midpoint, 
-                radius=search_radius,
-                place_type="establishment"
-            )
+            time1_to_mid, time2_to_mid, nearby_places, categorized_businesses = await asyncio.gather(*parallel_tasks)
             
-            # Get categorized businesses within walking distance
-            categorized_businesses = self.maps_service.get_places_by_category(
-                geographic_midpoint,
-                radius=search_radius,
-                categories=['restaurant', 'cafe', 'bar', 'shopping_mall', 'store', 'park', 'tourist_attraction', 'gym', 'library']
-            )
-            
-            # Evaluate each nearby place
+            # Evaluate each nearby place - this is where we can make the biggest optimization
+            # by running transit time calculations in parallel
             best_meeting_point = None
             best_score = float('inf')
             
-            for place in nearby_places:
-                time1_to_place = self.maps_service.get_transit_time(location1, place)
-                time2_to_place = self.maps_service.get_transit_time(location2, place)
+            if nearby_places:
+                # Create tasks for all transit time calculations at once
+                transit_tasks = []
+                for place in nearby_places:
+                    transit_tasks.extend([
+                        self.maps_service.get_transit_time_async(location1, place),
+                        self.maps_service.get_transit_time_async(location2, place)
+                    ])
                 
-                if time1_to_place and time2_to_place:
-                    # Calculate time difference (fairness factor)
-                    time_difference = abs(time1_to_place - time2_to_place)
+                # Run all transit time calculations in parallel
+                transit_results = await asyncio.gather(*transit_tasks, return_exceptions=True)
+                
+                # Process results in pairs (time1_to_place, time2_to_place)
+                for i, place in enumerate(nearby_places):
+                    time1_to_place = transit_results[i * 2] if i * 2 < len(transit_results) and not isinstance(transit_results[i * 2], Exception) else None
+                    time2_to_place = transit_results[i * 2 + 1] if i * 2 + 1 < len(transit_results) and not isinstance(transit_results[i * 2 + 1], Exception) else None
                     
-                    # Calculate total travel time (efficiency factor)
-                    total_time = time1_to_place + time2_to_place
-                    
-                    # Calculate composite score: minimize both total time and time difference
-                    # Weight the fairness (equal travel times) more heavily
-                    fairness_weight = 0.7  # How much we care about equal travel times
-                    efficiency_weight = 0.3  # How much we care about minimizing total time
-                    
-                    # Normalize scores (divide by 3600 to convert seconds to hours for scoring)
-                    fairness_score = time_difference / 3600  # Lower is better
-                    efficiency_score = total_time / 3600     # Lower is better
-                    
-                    composite_score = (fairness_weight * fairness_score) + (efficiency_weight * efficiency_score)
-                    
-                    if composite_score < best_score:
-                        best_score = composite_score
-                        best_meeting_point = {
-                            **place,
-                            'time_from_address1': time1_to_place,
-                            'time_from_address2': time2_to_place,
-                            'time_difference_seconds': time_difference,
-                            'time_difference_minutes': round(time_difference / 60, 1),
-                            'total_travel_time_seconds': total_time,
-                            'total_travel_time_minutes': round(total_time / 60, 1),
-                            'composite_score': composite_score,
-                            'fairness_score': fairness_score,
-                            'efficiency_score': efficiency_score
-                        }
+                    if time1_to_place and time2_to_place:
+                        # Calculate time difference (fairness factor)
+                        time_difference = abs(time1_to_place - time2_to_place)
+                        
+                        # Calculate total travel time (efficiency factor)
+                        total_time = time1_to_place + time2_to_place
+                        
+                        # Calculate composite score: minimize both total time and time difference
+                        # Weight the fairness (equal travel times) more heavily
+                        fairness_weight = 0.7  # How much we care about equal travel times
+                        efficiency_weight = 0.3  # How much we care about minimizing total time
+                        
+                        # Normalize scores (divide by 3600 to convert seconds to hours for scoring)
+                        fairness_score = time_difference / 3600  # Lower is better
+                        efficiency_score = total_time / 3600     # Lower is better
+                        
+                        composite_score = (fairness_weight * fairness_score) + (efficiency_weight * efficiency_score)
+                        
+                        if composite_score < best_score:
+                            best_score = composite_score
+                            best_meeting_point = {
+                                **place,
+                                'time_from_address1': time1_to_place,
+                                'time_from_address2': time2_to_place,
+                                'time_difference_seconds': time_difference,
+                                'time_difference_minutes': round(time_difference / 60, 1),
+                                'total_travel_time_seconds': total_time,
+                                'total_travel_time_minutes': round(total_time / 60, 1),
+                                'composite_score': composite_score,
+                                'fairness_score': fairness_score,
+                                'efficiency_score': efficiency_score
+                            }
             
             # Prepare result
             result['success'] = True
@@ -238,8 +319,8 @@ class MiddlePointFinder:
                     'from_address2_minutes': round(time2_to_mid / 60, 1) if time2_to_mid else None
                 },
                 'optimal_meeting_point': best_meeting_point,
-                'nearby_alternatives': nearby_places[:5],  # Return top 5 alternatives
-                'categorized_businesses': categorized_businesses
+                'nearby_alternatives': nearby_places[:5] if nearby_places else [],  # Return top 5 alternatives
+                'categorized_businesses': categorized_businesses or {}
             }
             
         except Exception as e:
