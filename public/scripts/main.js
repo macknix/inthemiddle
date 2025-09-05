@@ -2,6 +2,7 @@ const API_BASE = 'http://localhost:5001';
 let map;
 let directionsService;
 let directionsRenderer1, directionsRenderer2;
+let directionsRendererAlt1, directionsRendererAlt2; // for second algorithm
 let currentData = null;
 let markers = [];
 let businessMarkers = [];
@@ -148,6 +149,32 @@ function initMaps() {
         preserveViewport: false
     });
     
+    // Alternative renderers for second algorithm (route-midpoint)
+    directionsRendererAlt1 = new google.maps.DirectionsRenderer({
+        map: map,
+        polylineOptions: {
+            strokeColor: '#9c27b0', // purple
+            strokeWeight: 5,
+            strokeOpacity: 0.85,
+            clickable: true,
+            zIndex: 999
+        },
+        suppressMarkers: true,
+        preserveViewport: false
+    });
+    directionsRendererAlt2 = new google.maps.DirectionsRenderer({
+        map: map,
+        polylineOptions: {
+            strokeColor: '#0f9d58', // green
+            strokeWeight: 5,
+            strokeOpacity: 0.85,
+            clickable: true,
+            zIndex: 999
+        },
+        suppressMarkers: true,
+        preserveViewport: false
+    });
+    
     checkApiStatus();
     
     // Initialize Google Places Autocomplete
@@ -211,7 +238,7 @@ function closeAllInfoWindows() {
 window.closeAllInfoWindows = closeAllInfoWindows;
 
 // Display routes from both addresses to the meeting point
-function displayRoutes(address1, address2, meetingPoint) {
+function displayRoutesWithRenderers(address1, address2, meetingPoint, rendererA, rendererB, colorA, colorB, labelSuffix = '') {
     console.log('displayRoutes called with:', { address1, address2, meetingPoint });
     
     if (!directionsService) {
@@ -237,15 +264,15 @@ function displayRoutes(address1, address2, meetingPoint) {
     }, (result, status) => {
         console.log('Route 1 response:', status, result);
         if (status === 'OK') {
-            directionsRenderer1.setMap(map);
-            directionsRenderer1.setDirections(result);
+            rendererA.setMap(map);
+            rendererA.setDirections(result);
             console.log('Route 1 displayed successfully');
             
             // Add click listener to route 1
             setTimeout(() => {
                 try {
                     const route = result.routes[0];
-                    addRouteClickListener(directionsRenderer1, route, 'Route from Address A', '#4285f4');
+                    addRouteClickListener(rendererA, route, `Route from Address A${labelSuffix ? ' - ' + labelSuffix : ''}`, colorA);
                 } catch (e) {
                     console.error('Error adding click listener to route 1:', e);
                 }
@@ -261,15 +288,15 @@ function displayRoutes(address1, address2, meetingPoint) {
             }, (result2, status2) => {
                 console.log('Route 1 driving fallback response:', status2, result2);
                 if (status2 === 'OK') {
-                    directionsRenderer1.setMap(map);
-                    directionsRenderer1.setDirections(result2);
+                    rendererA.setMap(map);
+                    rendererA.setDirections(result2);
                     console.log('Route 1 displayed with driving mode');
                     
                     // Add click listener
                     setTimeout(() => {
                         try {
                             const route = result2.routes[0];
-                            addRouteClickListener(directionsRenderer1, route, 'Route from Address A (Driving)', '#4285f4');
+                            addRouteClickListener(rendererA, route, `Route from Address A (Driving)${labelSuffix ? ' - ' + labelSuffix : ''}`, colorA);
                         } catch (e) {
                             console.error('Error adding click listener to route 1 (driving):', e);
                         }
@@ -294,15 +321,15 @@ function displayRoutes(address1, address2, meetingPoint) {
     }, (result, status) => {
         console.log('Route 2 response:', status, result);
         if (status === 'OK') {
-            directionsRenderer2.setMap(map);
-            directionsRenderer2.setDirections(result);
+            rendererB.setMap(map);
+            rendererB.setDirections(result);
             console.log('Route 2 displayed successfully');
             
             // Add click listener to route 2
             setTimeout(() => {
                 try {
                     const route = result.routes[0];
-                    addRouteClickListener(directionsRenderer2, route, 'Route from Address B', '#ea4335');
+                    addRouteClickListener(rendererB, route, `Route from Address B${labelSuffix ? ' - ' + labelSuffix : ''}`, colorB);
                 } catch (e) {
                     console.error('Error adding click listener to route 2:', e);
                 }
@@ -318,15 +345,15 @@ function displayRoutes(address1, address2, meetingPoint) {
             }, (result2, status2) => {
                 console.log('Route 2 driving fallback response:', status2, result2);
                 if (status2 === 'OK') {
-                    directionsRenderer2.setMap(map);
-                    directionsRenderer2.setDirections(result2);
+                    rendererB.setMap(map);
+                    rendererB.setDirections(result2);
                     console.log('Route 2 displayed with driving mode');
                     
                     // Add click listener
                     setTimeout(() => {
                         try {
                             const route = result2.routes[0];
-                            addRouteClickListener(directionsRenderer2, route, 'Route from Address B (Driving)', '#ea4335');
+                            addRouteClickListener(rendererB, route, `Route from Address B (Driving)${labelSuffix ? ' - ' + labelSuffix : ''}`, colorB);
                         } catch (e) {
                             console.error('Error adding click listener to route 2 (driving):', e);
                         }
@@ -337,6 +364,20 @@ function displayRoutes(address1, address2, meetingPoint) {
             });
         }
     });
+}
+
+// Backwards-compatible wrapper using default renderers/colors
+function displayRoutes(address1, address2, meetingPoint) {
+    return displayRoutesWithRenderers(
+        address1,
+        address2,
+        meetingPoint,
+        directionsRenderer1,
+        directionsRenderer2,
+        '#4285f4',
+        '#ea4335',
+        'Default'
+    );
 }
 
 // Add click listener to route polylines for showing instructions
@@ -701,6 +742,14 @@ function clearRoutes() {
         directionsRenderer2.setDirections({routes: []});
         directionsRenderer2.setMap(null);
     }
+    if (directionsRendererAlt1) {
+        directionsRendererAlt1.setDirections({routes: []});
+        directionsRendererAlt1.setMap(null);
+    }
+    if (directionsRendererAlt2) {
+        directionsRendererAlt2.setDirections({routes: []});
+        directionsRendererAlt2.setMap(null);
+    }
     
     // Clear route click listeners and polylines
     routes.forEach(routeInfo => {
@@ -735,8 +784,16 @@ function clearRoutes() {
 }
 
 // Display results on map
-function displayResultsOnMap(data) {
+function displayResultsOnMap(data, options = {}) {
     console.log('displayResultsOnMap called with data:', data);
+    const {
+    renderers = { A: directionsRenderer1, B: directionsRenderer2 },
+    colors = { A: '#4285f4', B: '#ea4335' },
+        labelSuffix = 'Default',
+        showBusinesses = true,
+    optimalColor = '#34a853',
+    betweenColor = null
+    } = options;
     
     // Validate data structure
     if (!data) {
@@ -749,10 +806,11 @@ function displayResultsOnMap(data) {
     
     if (data.address1 && data.address1.geocoded) {
         // Expected structure
-        address1 = data.address1.geocoded;
-        address2 = data.address2.geocoded;
-        midpoint = data.geographic_midpoint;
-        optimal = data.optimal_meeting_point;
+    address1 = data.address1.geocoded;
+    address2 = data.address2.geocoded;
+    // Support both algorithms: default uses geographic_midpoint, route-midpoint uses route_midpoint
+    midpoint = data.geographic_midpoint || data.route_midpoint || null;
+    optimal = data.optimal_meeting_point;
         console.log('Using expected data structure');
     } else if (data.success && data.data) {
         // Maybe data is nested differently
@@ -773,8 +831,17 @@ function displayResultsOnMap(data) {
         return;
     }
     
-    // Center map on midpoint
-    const center = { lat: midpoint.lat, lng: midpoint.lng };
+    // Center map near a sensible point: midpoint if available, else optimal, else average of inputs
+    let center;
+    if (midpoint && typeof midpoint.lat === 'number' && typeof midpoint.lng === 'number') {
+        center = { lat: midpoint.lat, lng: midpoint.lng };
+    } else if (optimal && typeof optimal.lat === 'number' && typeof optimal.lng === 'number') {
+        center = { lat: optimal.lat, lng: optimal.lng };
+    } else if (address1 && address2) {
+        center = { lat: (address1.lat + address2.lat) / 2, lng: (address1.lng + address2.lng) / 2 };
+    } else {
+        center = map.getCenter();
+    }
     map.setCenter(center);
     map.setZoom(14);
     
@@ -819,11 +886,11 @@ function displayResultsOnMap(data) {
         const optimalMarker = new google.maps.Marker({
             position: { lat: optimal.lat, lng: optimal.lng },
             map: map,
-            title: `Optimal Meeting Point: ${optimal.name}`,
+            title: `Optimal Meeting Point (${labelSuffix}): ${optimal.name}`,
             icon: {
                 url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
                     <svg xmlns="http://www.w3.org/2000/svg" width="50" height="50" viewBox="0 0 50 50">
-                        <circle cx="25" cy="25" r="22" fill="#34a853" stroke="white" stroke-width="4"/>
+                        <circle cx="25" cy="25" r="22" fill="${optimalColor}" stroke="white" stroke-width="4"/>
                         <text x="25" y="31" text-anchor="middle" fill="white" font-family="Arial" font-size="20" font-weight="bold">★</text>
                     </svg>
                 `),
@@ -833,7 +900,50 @@ function displayResultsOnMap(data) {
         markers.push(optimalMarker);
         
         // Display routes from both addresses to the optimal meeting point
-        displayRoutes(address1, address2, optimal);
+        displayRoutesWithRenderers(address1, address2, optimal, renderers.A, renderers.B, colors.A, colors.B, labelSuffix);
+
+        // If backend provided an overview polyline for the route between A and B (route-midpoint algo), draw it
+        if (data.route && data.route.overview_polyline && typeof google.maps.geometry !== 'undefined' && google.maps.geometry.encoding) {
+            try {
+                const path = google.maps.geometry.encoding.decodePath(data.route.overview_polyline);
+                const poly = new google.maps.Polyline({
+                    path,
+                    geodesic: true,
+                    strokeColor: betweenColor || '#7b1fa2',
+                    strokeOpacity: 0.9,
+                    strokeWeight: 4,
+                    clickable: true,
+                    zIndex: 998
+                });
+                poly.setMap(map);
+
+                // Build info content
+                const distance = data.route.distance_meters ? `${(data.route.distance_meters/1000).toFixed(1)} km` : 'N/A';
+                const duration = data.route.duration_seconds ? `${Math.round(data.route.duration_seconds/60)} min` : 'N/A';
+                const infoWindow = new google.maps.InfoWindow({
+                    content: `
+                        <div style="padding:8px; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+                            <div style="font-weight:600; margin-bottom:6px; color:${betweenColor || '#7b1fa2'};">🚇 Fastest Transit Route ${labelSuffix ? '('+labelSuffix+')' : ''}</div>
+                            <div>⏱️ Duration: ${duration}</div>
+                            <div>📏 Distance: ${distance}</div>
+                        </div>
+                    `
+                });
+
+                const listener = poly.addListener('click', (e) => {
+                    routeClickedRecently = true;
+                    setTimeout(() => { routeClickedRecently = false; }, 200);
+                    closeAllInfoWindows();
+                    infoWindow.setPosition(e.latLng);
+                    infoWindow.open(map);
+                    openInfoWindows.push(infoWindow);
+                });
+
+                routes.push({ polyline: poly, infoWindow, listener });
+            } catch (err) {
+                console.error('Failed to decode/plot overview polyline:', err);
+            }
+        }
         
         // Add info window for optimal point
         const meetingPointInfoWindow = new google.maps.InfoWindow({
@@ -861,10 +971,31 @@ function displayResultsOnMap(data) {
             meetingPointInfoWindow.open(map, optimalMarker);
             openInfoWindows.push(meetingPointInfoWindow);
         });
+    } else if (midpoint && typeof midpoint.lat === 'number' && typeof midpoint.lng === 'number') {
+        // Fallback: show the midpoint as a marker and draw routes to it
+        const midMarker = new google.maps.Marker({
+            position: { lat: midpoint.lat, lng: midpoint.lng },
+            map: map,
+            title: `Midpoint ${labelSuffix ? '('+labelSuffix+')' : ''}`,
+            icon: {
+                url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
+                    <svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 50 50">
+                        <circle cx="25" cy="25" r="22" fill="${optimalColor}" stroke="white" stroke-width="4"/>
+                        <text x="25" y="31" text-anchor="middle" fill="white" font-family="Arial" font-size="16" font-weight="bold">M</text>
+                    </svg>
+                `),
+                scaledSize: new google.maps.Size(44, 44)
+            }
+        });
+        markers.push(midMarker);
+
+        displayRoutesWithRenderers(address1, address2, midpoint, renderers.A, renderers.B, colors.A, colors.B, labelSuffix);
     }
     
-    // Display businesses within walking circles
-    displayBusinesses(categorizedBusinesses);
+    // Display businesses within walking circles (only for primary/default to avoid clutter)
+    if (showBusinesses) {
+        displayBusinesses(categorizedBusinesses);
+    }
 }
 
 
@@ -1126,78 +1257,101 @@ document.getElementById('searchForm').addEventListener('submit', async (e) => {
     const requestData = {
         address1: address1,
         address2: address2,
-        search_radius: 2000  // Fixed radius since we're not using the input anymore
+        search_radius: 2000
     };
     
     console.log('Request data:', requestData);
     console.log('API URL:', `${API_BASE}/api/find-middle-point`);
     
     try {
-        console.log('Sending request...');
-        const response = await fetch(`${API_BASE}/api/find-middle-point`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(requestData)
-        });
-        
-        console.log('Response received:', response.status, response.statusText);
-        
-        let result;
-        try {
-            result = await response.json();
-        } catch (parseError) {
-            console.error('Failed to parse JSON response:', parseError);
-            throw new Error('Invalid JSON response from server');
-        }
-        
-        console.log('Full API response:', JSON.stringify(result, null, 2));
-        
-        if (response.ok && result && result.success) {
-            console.log('SUCCESS: Request completed successfully');
-            console.log('Result data structure:', JSON.stringify(result.data, null, 2));
-            
-            // Validate the data structure before proceeding
-            if (!result.data) {
-                console.error('No data in successful response');
-                resultsDiv.innerHTML = `
-                    <div class="error">
-                        ❌ Error: No data returned from server
-                    </div>
-                `;
-                return;
-            }
-            
-            currentData = result.data;
-            
-            // Add a small delay to ensure DOM is ready
-            setTimeout(() => {
-                displayResultsOnMap(result.data);
-            }, 100);
-            
-            const optimal = result.data.optimal_meeting_point;
-            if (optimal) {
-                resultsDiv.innerHTML = `
-                    <div class="result-item">
-                        <h4>🎯 Optimal Meeting Point</h4>
-                        <strong>${optimal.name}</strong><br>
-                        📍 ${optimal.formatted_address}<br>
-                        ${optimal.rating ? `⭐ ${optimal.rating}/5<br>` : ''}
-                        🚇 Travel times: ${Math.round(optimal.time_from_address1/60)}min / ${Math.round(optimal.time_from_address2/60)}min<br>
-                        ⚖️ Difference: ${optimal.time_difference_minutes} minutes
-                    </div>
-                `;
-            }
-        } else {
-            console.log('ERROR: Request failed with result:', result);
+        console.log('Sending requests for both algorithms in parallel...');
+        const [respDefault, respRoute] = await Promise.all([
+            fetch(`${API_BASE}/api/find-middle-point`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(requestData)
+            }),
+            fetch(`${API_BASE}/api/find-middle-point`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ...requestData, algorithm: 'route-midpoint' })
+            })
+        ]);
+
+        const [resDefault, resRoute] = await Promise.all([
+            respDefault.json().catch(() => null),
+            respRoute.json().catch(() => null)
+        ]);
+
+        const okDefault = respDefault.ok && resDefault && resDefault.success && resDefault.data;
+        const okRoute = respRoute.ok && resRoute && resRoute.success && resRoute.data;
+
+        if (!okDefault && !okRoute) {
             resultsDiv.innerHTML = `
-                <div class="error">
-                    ❌ Error: ${result.error || 'Unknown error occurred'}
-                </div>
-            `;
+                <div class="error">❌ Error: ${
+                    (resDefault && resDefault.error) || (resRoute && resRoute.error) || 'Both algorithms failed'
+                }</div>`;
+            return;
         }
-        
+
+        // Render default first (blue/red), with businesses
+        if (okDefault) {
+            currentData = resDefault.data; // keep latest
+            setTimeout(() => {
+                displayResultsOnMap(resDefault.data, {
+                    renderers: { A: directionsRenderer1, B: directionsRenderer2 },
+                    colors: { A: '#4285f4', B: '#ea4335' },
+                    labelSuffix: 'Default',
+                    showBusinesses: true,
+                    optimalColor: '#34a853'
+                });
+            }, 50);
+        }
+
+        // Then overlay route-midpoint (purple/green), without duplicating businesses
+        if (okRoute) {
+            setTimeout(() => {
+                displayResultsOnMap(resRoute.data, {
+                    renderers: { A: directionsRendererAlt1, B: directionsRendererAlt2 },
+                    colors: { A: '#9c27b0', B: '#0f9d58' },
+                    labelSuffix: 'Route Midpoint',
+                    showBusinesses: false,
+                    optimalColor: '#fbbc05',
+                    betweenColor: '#7b1fa2'
+                });
+            }, 100);
+        }
+
+        // Update results panel summary for both
+        const summaries = [];
+        if (okDefault && resDefault.data.optimal_meeting_point) {
+            const mp = resDefault.data.optimal_meeting_point;
+            summaries.push(`
+                <div class="result-item">
+                    <h4>🎯 Optimal (Default)</h4>
+                    <strong>${mp.name}</strong><br>
+                    📍 ${mp.formatted_address}<br>
+                    ${mp.rating ? `⭐ ${mp.rating}/5<br>` : ''}
+                    🚇 Travel times: ${Math.round(mp.time_from_address1/60)}min / ${Math.round(mp.time_from_address2/60)}min<br>
+                    ⚖️ Difference: ${mp.time_difference_minutes} minutes
+                </div>
+            `);
+        }
+        if (okRoute && resRoute.data.optimal_meeting_point) {
+            const mp2 = resRoute.data.optimal_meeting_point;
+            summaries.push(`
+                <div class="result-item">
+                    <h4>🎯 Optimal (Route Midpoint)</h4>
+                    <strong>${mp2.name}</strong><br>
+                    📍 ${mp2.formatted_address}<br>
+                    ${mp2.rating ? `⭐ ${mp2.rating}/5<br>` : ''}
+                    🚇 Travel times: ${Math.round(mp2.time_from_address1/60)}min / ${Math.round(mp2.time_from_address2/60)}min<br>
+                    ⚖️ Difference: ${mp2.time_difference_minutes} minutes
+                </div>
+            `);
+        }
+        resultsDiv.innerHTML = summaries.join('');
+
     } catch (error) {
         console.error('CATCH BLOCK TRIGGERED:', error);
         console.error('Error stack:', error.stack);
@@ -1214,7 +1368,6 @@ document.getElementById('searchForm').addEventListener('submit', async (e) => {
         console.log('=== FRONTEND: Request completed ===');
     }
 });
-
 // Google Places Autocomplete variables
 let autocomplete1, autocomplete2;
 

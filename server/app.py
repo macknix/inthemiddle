@@ -5,9 +5,9 @@ import os
 import logging
 import json
 try:
-    from .maps_service import GoogleMapsService, MiddlePointFinder
+    from .maps_service import GoogleMapsService, MiddlePointFinder, MiddlePointFinderTwo
 except ImportError:
-    from maps_service import GoogleMapsService, MiddlePointFinder
+    from maps_service import GoogleMapsService, MiddlePointFinder, MiddlePointFinderTwo
 
 # Load environment variables
 load_dotenv()
@@ -39,7 +39,14 @@ else:
     try:
         logger.info("Initializing Google Maps service...")
         maps_service = GoogleMapsService(api_key)
-        middle_point_finder = MiddlePointFinder(maps_service)
+        # Choose algorithm via env var (default -> original, route-midpoint -> MiddlePointFinderTwo)
+        algo_env = os.getenv('MIDDLEPOINT_ALGORITHM', 'default').lower()
+        if algo_env == 'route-midpoint':
+            middle_point_finder = MiddlePointFinderTwo(maps_service)
+            logger.info("Using MiddlePointFinderTwo (route-midpoint algorithm) from env setting")
+        else:
+            middle_point_finder = MiddlePointFinder(maps_service)
+            logger.info("Using MiddlePointFinder (default algorithm) from env setting")
         logger.info("Google Maps service initialized successfully")
     except ValueError as e:
         logger.error(f"Error initializing Google Maps service: {e}")
@@ -150,7 +157,19 @@ def find_middle_point():
             return jsonify({'error': 'search_radius must be between 100 and 10000 meters'}), 400
         
         logger.info("Starting middle point calculation...")
-        result = middle_point_finder.find_optimal_meeting_point(
+        # Optional per-request override of algorithm
+        algorithm = data.get('algorithm', None)
+        finder = middle_point_finder
+        if maps_service and algorithm:
+            algo = str(algorithm).lower()
+            if algo == 'route-midpoint':
+                finder = MiddlePointFinderTwo(maps_service)
+                logger.info("Per-request algorithm override: route-midpoint")
+            elif algo == 'default':
+                finder = MiddlePointFinder(maps_service)
+                logger.info("Per-request algorithm override: default")
+
+        result = finder.find_optimal_meeting_point(
             address1, 
             address2, 
             search_radius

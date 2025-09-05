@@ -19,34 +19,42 @@ server/
 
 ### `app.py` - Flask API Server
 - **Purpose**: Main Flask application providing REST API
-- **Port**: 5001
-- **Endpoints**: Health check, geocoding, meeting point finding
-- **Features**: CORS enabled, error handling, environment configuration
+- **Port**: 5000
+- **Endpoints**: Health check, geocoding, config, meeting point finding
+- **Features**: CORS enabled, error handling, environment/algorithm configuration
 
 **Key Routes:**
 ```python
 GET  /                     # Health check
 POST /api/geocode          # Address geocoding
-POST /api/find-middle-point # Find optimal meeting point
+GET  /api/config           # Frontend config (API base, Maps API key presence)
+POST /api/find-middle-point # Find optimal meeting point (supports algorithm override)
 ```
 
 ### `maps_service.py` - Google Maps Integration
 - **Purpose**: Wrapper for Google Maps APIs
-- **Classes**: `GoogleMapsService`, `MiddlePointFinder`
-- **Features**: Geocoding, directions, places search, transit times
+- **Classes**: `GoogleMapsService`, `MiddlePointFinder`, `MiddlePointFinderTwo`
+- **Features**: Geocoding, directions/transit times, places search, route midpoint along fastest transit path
 
 **Key Classes:**
 ```python
 class GoogleMapsService:
     # Direct Google Maps API integration
-    def geocode_address()
-    def get_directions()
-    def search_nearby_places()
+  def geocode_address()
+  def get_transit_time()
+  def get_fastest_transit_route()  # returns overview polyline, distance, duration, decoded points
+  def search_nearby_places()
+  def decode_polyline()
 
 class MiddlePointFinder:
     # Business logic for finding meeting points
     def find_optimal_meeting_point()
     def calculate_transit_times()
+
+class MiddlePointFinderTwo:
+  # Alternative algorithm using the midpoint along the fastest transit route
+  def find_optimal_meeting_point()
+  # Internally decodes route polyline and samples the 50% path-length point
 ```
 
 ### `serve_map.py` - Static File Server
@@ -79,6 +87,7 @@ GET /
   "endpoints": {
     "find_middle_point": "/api/find-middle-point",
     "geocode": "/api/geocode",
+  "config": "/api/config",
     "health": "/"
   },
   "status": "healthy"
@@ -92,6 +101,21 @@ Content-Type: application/json
 
 {
   "address": "Times Square, New York, NY"
+}
+```
+
+### Config Endpoint
+```http
+GET /api/config
+```
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "googleMapsApiKey": "<masked or null>",
+    "apiBaseUrl": "http://localhost:5000"
+  }
 }
 ```
 **Response:**
@@ -114,26 +138,50 @@ Content-Type: application/json
 {
   "address1": "Brooklyn Bridge, NY",
   "address2": "Central Park, NY",
-  "transport_mode": "transit",
-  "search_nearby_businesses": true,
-  "business_types": ["restaurant", "cafe"]
+  "search_radius": 2000,
+  "algorithm": "default" | "route-midpoint"  // optional; overrides env default
 }
 ```
-**Response:**
+**Response (default algorithm):**
 ```json
 {
   "success": true,
   "data": {
-    "middle_point": {
-      "lat": 40.7589,
-      "lng": -73.9851,
-      "address": "Lower Manhattan, NY"
+    "address1": { "input": "...", "geocoded": {"lat": 0, "lng": 0} },
+    "address2": { "input": "...", "geocoded": {"lat": 0, "lng": 0} },
+    "geographic_midpoint": { "lat": 0, "lng": 0 },
+    "geographic_midpoint_transit_times": {
+      "from_address1_seconds": 900,
+      "from_address2_seconds": 960
     },
-    "route_info": {
-      "address1_to_middle": { "duration": "15 mins", "distance": "2.1 km" },
-      "address2_to_middle": { "duration": "16 mins", "distance": "2.3 km" }
+    "optimal_meeting_point": { /* best place with fairness/efficiency scores */ },
+    "nearby_alternatives": [...],
+    "categorized_businesses": { "restaurant": [...], "cafe": [...], ... }
+  }
+}
+```
+
+**Response (route-midpoint algorithm):**
+```json
+{
+  "success": true,
+  "data": {
+    "algorithm": "transit-route-midpoint",
+    "address1": { "input": "...", "geocoded": {"lat": 0, "lng": 0} },
+    "address2": { "input": "...", "geocoded": {"lat": 0, "lng": 0} },
+    "route": {
+      "overview_polyline": "{encoded}",
+      "distance_meters": 12345,
+      "duration_seconds": 1800
     },
-    "nearby_businesses": [...]
+    "route_midpoint": { "lat": 0, "lng": 0 },
+    "route_midpoint_transit_times": {
+      "from_address1_seconds": 900,
+      "from_address2_seconds": 900
+    },
+    "optimal_meeting_point": { /* best place with scores */ },
+    "nearby_alternatives": [...],
+    "categorized_businesses": { ... }
   }
 }
 ```
@@ -143,6 +191,7 @@ Content-Type: application/json
 ### Required Environment Variables
 ```bash
 GOOGLE_MAPS_API_KEY=your_google_maps_api_key_here
+MIDDLEPOINT_ALGORITHM=default        # or route-midpoint (optional)
 ```
 
 ### Google Maps APIs Required
@@ -162,6 +211,14 @@ python -m server.app
 # Static file server
 python -m server.serve_map
 ```
+
+### Algorithm Selection
+- Default algorithm: `MiddlePointFinder` (geographic midpoint seed)
+- Alternate algorithm: `MiddlePointFinderTwo` (midpoint along fastest transit route)
+
+You can select the algorithm in two ways:
+- Environment default: set `MIDDLEPOINT_ALGORITHM=default` or `route-midpoint`
+- Per-request override: include `{ "algorithm": "default" | "route-midpoint" }` in `/api/find-middle-point` body
 
 ### Testing
 ```bash
@@ -244,5 +301,5 @@ python -m server.app
 
 ### Common Issues
 - **API Key Issues**: Check `.env` configuration
-- **Port Conflicts**: Ensure ports 5001/8082 are available
+- **Port Conflicts**: Ensure ports 5000/8082 are available
 - **CORS Errors**: Verify frontend/backend URL configuration
