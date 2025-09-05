@@ -435,16 +435,16 @@ class MiddlePointFinderTwo:
             'lng': p1['lng'] + (p2['lng'] - p1['lng']) * fraction,
         }
 
-    def _midpoint_along_polyline(self, points: List[Dict]) -> Optional[Dict]:
-        """
-        Compute the geographic point located at half the total path length along the given polyline points.
+    def _compute_midpoint_position(self, points: List[Dict]) -> Tuple[Optional[Dict], Optional[int], float]:
+        """Locate the path-distance midpoint and return (midpoint, left_index, frac).
+        left_index is the start vertex index of the segment containing the midpoint.
+        frac is the interpolation fraction along segment [left_index -> left_index+1].
         """
         if not points:
-            return None
+            return None, None, 0.0
         if len(points) == 1:
-            return points[0]
+            return points[0], 0, 0.0
 
-        # Compute cumulative distances
         seg_lengths: List[float] = []
         total = 0.0
         for i in range(len(points) - 1):
@@ -455,21 +455,66 @@ class MiddlePointFinderTwo:
             total += d
 
         if total == 0:
-            return points[len(points) // 2]
+            mid_idx = len(points) // 2
+            return points[mid_idx], max(0, mid_idx - 1), 0.0
 
         target = total / 2.0
         acc = 0.0
         for i, seg_len in enumerate(seg_lengths):
             next_acc = acc + seg_len
             if next_acc >= target:
-                # target falls on segment i -> i+1
                 remain = target - acc
                 frac = 0.0 if seg_len == 0 else (remain / seg_len)
-                return self._interpolate_point(points[i], points[i + 1], frac)
+                midpoint = self._interpolate_point(points[i], points[i + 1], frac)
+                return midpoint, i, frac
             acc = next_acc
 
-        # Fallback to last point
-        return points[-1]
+        return points[-1], len(points) - 2, 1.0
+
+    def _midpoint_along_polyline(self, points: List[Dict]) -> Tuple[List[Dict], List[Dict], Optional[Dict]]:
+        """
+        Return two lists of candidates radiating from the path midpoint: (towards_A, towards_B, midpoint).
+        - towards_A: points walking from the midpoint toward the path start (index 0), nearest-first.
+        - towards_B: points walking from the midpoint toward the path end (last index), nearest-first.
+        The exact interpolated midpoint is provided separately.
+        """
+        midpoint, i, frac = self._compute_midpoint_position(points)
+        if midpoint is None or i is None:
+            return [], [], None
+
+        # Build ordered candidate sequences outward from the midpoint
+        # Left side (towards A): start with vertex at i, then i-1, ... 0
+        left: List[Dict] = []
+        for k in range(i, -1, -1):
+            left.append(points[k])
+
+        # Right side (towards B): start with vertex at i+1, then i+2, ... last
+        right: List[Dict] = []
+        for k in range(i + 1, len(points)):
+            right.append(points[k])
+
+        return left, right, midpoint
+
+    async def _evaluate_candidate(self, loc1: Dict, loc2: Dict, point: Dict) -> Optional[Dict]:
+        """Compute transit times from both addresses to a candidate point and return metrics."""
+        try:
+            t1_task = self.maps_service.get_transit_time_async(loc1, point)
+            t2_task = self.maps_service.get_transit_time_async(loc2, point)
+            t1, t2 = await asyncio.gather(t1_task, t2_task)
+            if t1 is None or t2 is None:
+                return None
+            diff = abs(t1 - t2)
+            return {
+                'point': point,
+                'time_from_address1': t1,
+                'time_from_address2': t2,
+                'time_difference_seconds': diff,
+                'time_difference_minutes': round(diff / 60, 1),
+                'total_travel_time_seconds': t1 + t2,
+                'total_travel_time_minutes': round((t1 + t2) / 60, 1)
+            }
+        except Exception:
+            return None
 
     def find_optimal_meeting_point(self, address1: str, address2: str, search_radius: int = 2000) -> Dict:
         """
@@ -510,7 +555,46 @@ class MiddlePointFinderTwo:
                 route_midpoint = fallback_mid
                 route_meta = None
             else:
-                route_midpoint = self._midpoint_along_polyline(route_info['points'])
+                # Generate candidate sequences and initial midpoint
+                left_seq, right_seq, mid = self._midpoint_along_polyline(route_info['points'])
+                # Evaluate midpoint first
+                mid_eval = await self._evaluate_candidate(location1, location2, mid)
+                best = mid_eval or {'point': mid, 'time_from_address1': None, 'time_from_address2': None, 'time_difference_seconds': float('inf')}
+
+                # Iteratively evaluate neighbors from both sides, nearest-first
+                max_steps = 20  # safety bound to limit API calls
+                patience = 5    # stop if no improvement after N attempts
+                no_improve = 0
+                l = 0
+                r = 0
+                while (l < len(left_seq) or r < len(right_seq)) and (l + r) < max_steps and no_improve < patience:
+                    tasks = []
+                    labels = []
+                    if l < len(left_seq):
+                        tasks.append(self._evaluate_candidate(location1, location2, left_seq[l]))
+                        labels.append('L')
+                    if r < len(right_seq):
+                        tasks.append(self._evaluate_candidate(location1, location2, right_seq[r]))
+                        labels.append('R')
+
+                    results = await asyncio.gather(*tasks)
+                    improved = False
+                    for idx, res in enumerate(results):
+                        if res and res['time_difference_seconds'] is not None and res['time_difference_seconds'] < best['time_difference_seconds']:
+                            best = res
+                            improved = True
+                    if not improved:
+                        no_improve += 1
+                    else:
+                        no_improve = 0
+
+                    # advance pointers corresponding to evaluated candidates
+                    if 'L' in labels:
+                        l += 1
+                    if 'R' in labels:
+                        r += 1
+
+                route_midpoint = best['point'] if best and best.get('point') else mid
                 route_meta = {
                     'distance_meters': route_info.get('distance_meters'),
                     'duration_seconds': route_info.get('duration_seconds'),
