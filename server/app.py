@@ -176,6 +176,19 @@ def find_middle_point():
         )
         logger.info(f"Middle point calculation completed")
         logger.info(f"Result success: {result.get('success', False)}")
+
+        # Extra debug for route sampling points (route-midpoint algorithm)
+        try:
+            if result.get('success') and result.get('data'):
+                rsp = result['data'].get('route_sampling_points')
+                if isinstance(rsp, list):
+                    logger.info(f"route_sampling_points count: {len(rsp)}")
+                    if rsp:
+                        logger.debug(f"First route_sampling_point: {json.dumps(rsp[0])}")
+                else:
+                    logger.info("route_sampling_points key missing or not a list")
+        except Exception as _e:
+            logger.warning(f"Failed logging route_sampling_points: {_e}")
         
         if result.get('success'):
             logger.info(f"Successful result keys: {list(result.keys())}")

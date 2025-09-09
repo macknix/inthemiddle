@@ -6,11 +6,30 @@ let directionsRendererAlt1, directionsRendererAlt2; // for second algorithm
 let currentData = null;
 let markers = [];
 let businessMarkers = [];
+let sampleMarkers = [];
 let openInfoWindows = [];
 let routes = [];
 let categorizedBusinesses = {};
 let routeClickedRecently = false;
 let markerClickedRecently = false;
+
+// Lightweight Google polyline decoder (returns array of {lat,lng})
+function decodePolyline(encoded) {
+    if (!encoded || typeof encoded !== 'string') return [];
+    let index = 0, lat = 0, lng = 0, coordinates = [];
+    while (index < encoded.length) {
+        let b, shift = 0, result = 0;
+        do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+        const dlat = ((result & 1) ? ~(result >> 1) : (result >> 1));
+        lat += dlat;
+        shift = 0; result = 0;
+        do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+        const dlng = ((result & 1) ? ~(result >> 1) : (result >> 1));
+        lng += dlng;
+        coordinates.push({ lat: lat / 1e5, lng: lng / 1e5 });
+    }
+    return coordinates;
+}
 
 // Business type icons mapping
 const businessIcons = {
@@ -209,6 +228,9 @@ function clearMarkers() {
     markers.forEach(marker => marker.setMap(null));
     markers = [];
     clearBusinessMarkers();
+    // Clear sample markers
+    sampleMarkers.forEach(m => m.setMap(null));
+    sampleMarkers = [];
 }
 
 // Clear business markers specifically
@@ -783,6 +805,84 @@ function clearRoutes() {
     console.log('Routes cleared');
 }
 
+function renderSampledPoints(samplePoints, mapRef, color='#555') {
+    if (!Array.isArray(samplePoints)) return;
+    console.log('[Sampling] Rendering', samplePoints.length, 'route sampling points');
+    // Provide quick stats for debugging
+    if (samplePoints.length > 0) {
+        const mins = samplePoints.map(p => p.max_travel_time_minutes).filter(v => typeof v === 'number');
+        if (mins.length) {
+            const min = Math.min(...mins), max = Math.max(...mins), avg = mins.reduce((a,b)=>a+b,0)/mins.length;
+            console.log(`[Sampling] Max travel time minutes range: ${min}-${max} (avg ${avg.toFixed(1)})`);
+        }
+    }
+    const markerScale = 12; // larger points
+    const markerFill = '#d50000'; // red color for visibility
+    samplePoints.forEach(pt => {
+        try {
+            if (!pt || typeof pt.lat !== 'number' || typeof pt.lng !== 'number') return;
+            // Safe formatting
+            const rf = (typeof pt.route_fraction === 'number') ? (pt.route_fraction * 100).toFixed(1) : '?';
+            const off = (typeof pt.lateral_offset_m === 'number') ? pt.lateral_offset_m : '?';
+            const maxM = (typeof pt.max_travel_time_minutes === 'number') ? pt.max_travel_time_minutes : '?';
+            const diffM = (typeof pt.time_difference_minutes === 'number') ? pt.time_difference_minutes : '?';
+
+            // Use a consistent red color and larger size for sampled points
+            const fill = markerFill;
+            const marker = new google.maps.Marker({
+                position: { lat: pt.lat, lng: pt.lng },
+                map: mapRef,
+                zIndex: 5000,
+                icon: {
+                    path: google.maps.SymbolPath.CIRCLE,
+                    scale: markerScale + 2,
+                    fillColor: fill,
+                    fillOpacity: 0.9,
+                    strokeColor: '#8e0000',
+                    strokeWeight: 1.4
+                },
+                title: `Route ${rf}% | Offset ${off}m\nMax ${maxM}m | Δ ${diffM}m`
+            });
+            sampleMarkers.push(marker);
+
+            // Supplemental: small circle overlay to guarantee visibility
+            try {
+                const circle = new google.maps.Circle({
+                    strokeColor: '#b71c1c',
+                    strokeOpacity: 0.7,
+                    strokeWeight: 1,
+                    fillColor: '#ef5350',
+                    fillOpacity: 0.35,
+                    map: mapRef,
+                    center: { lat: pt.lat, lng: pt.lng },
+                    radius: 50,
+                    zIndex: 4000
+                });
+                sampleMarkers.push(circle);
+            } catch (e) {
+                // ignore if circle fails
+            }
+        } catch (err) {
+            console.warn('[Sampling] Failed to render a sample point:', err, pt);
+        }
+    });
+
+    // Ensure viewport includes the sampled points for visibility
+    try {
+        const bounds = new google.maps.LatLngBounds();
+        samplePoints.slice(0, 200).forEach(pt => {
+            if (typeof pt.lat === 'number' && typeof pt.lng === 'number') {
+                bounds.extend(new google.maps.LatLng(pt.lat, pt.lng));
+            }
+        });
+        if (!bounds.isEmpty()) {
+            mapRef.fitBounds(bounds);
+        }
+    } catch (e) {
+        console.warn('[Sampling] Failed to fit bounds inside render:', e);
+    }
+}
+
 // Display results on map
 function displayResultsOnMap(data, options = {}) {
     console.log('displayResultsOnMap called with data:', data);
@@ -971,6 +1071,31 @@ function displayResultsOnMap(data, options = {}) {
             meetingPointInfoWindow.open(map, optimalMarker);
             openInfoWindows.push(meetingPointInfoWindow);
         });
+
+            // Render route sampling points if provided (robust path)
+            try {
+                const samples = data.route_sampling_points;
+                if (Array.isArray(samples)) {
+                    if (samples.length > 0) {
+                        if (sampleMarkers.length === 0) {
+                            console.log('[Sampling] (displayResultsOnMap) Rendering', samples.length, 'samples');
+                            renderSampledPoints(samples, map, '#7b1fa2');
+                        } else {
+                            console.log('[Sampling] (displayResultsOnMap) Samples already rendered; skipping');
+                        }
+                    } else {
+                        console.warn('[Sampling] (displayResultsOnMap) Empty samples; trying polyline fallback');
+                        const poly = data.route && data.route.overview_polyline;
+                        const pts = decodePolyline(poly);
+                        if (pts && pts.length && sampleMarkers.length === 0) {
+                            const step = Math.max(1, Math.floor(pts.length / 40));
+                            const fallbackSamples = pts.filter((_, i) => i % step === 0);
+                            renderSampledPoints(fallbackSamples.map(p => ({ lat: p.lat, lng: p.lng })), map, '#d50000');
+                        }
+                    }
+                } catch (e) {
+                    console.warn('[Sampling] (displayResultsOnMap) Failed to render samples:', e);
+                }
     } else if (midpoint && typeof midpoint.lat === 'number' && typeof midpoint.lng === 'number') {
         // Fallback: show the midpoint as a marker and draw routes to it
         const midMarker = new google.maps.Marker({
@@ -1319,6 +1444,58 @@ document.getElementById('searchForm').addEventListener('submit', async (e) => {
                     optimalColor: '#fbbc05',
                     betweenColor: '#7b1fa2'
                 });
+                // Render sampled points from route algorithm
+                if (resRoute.data.route_sampling_points) {
+                    if (!resRoute.data.route_sampling_points.length) {
+                        console.warn('[Sampling] route_sampling_points empty in API response');
+                        // Fallback: generate sparse samples from overview polyline
+                        try {
+                            const poly = resRoute.data.route && resRoute.data.route.overview_polyline;
+                            const pts = decodePolyline(poly);
+                            if (pts && pts.length) {
+                                const step = Math.max(1, Math.floor(pts.length / 40));
+                                const fallbackSamples = pts.filter((_, i) => i % step === 0);
+                                renderSampledPoints(fallbackSamples.map(p => ({ lat: p.lat, lng: p.lng })), map, '#d50000');
+                            }
+                        } catch (e) {
+                            console.warn('[Sampling] Fallback sampling failed:', e);
+                        }
+                    } else {
+                        console.log('[Sampling] Received', resRoute.data.route_sampling_points.length, 'sampling points from backend');
+                        console.log('[Sampling] First sample point example:', resRoute.data.route_sampling_points[0]);
+                        renderSampledPoints(resRoute.data.route_sampling_points, map, '#7b1fa2');
+                        // Auto-fit bounds to include addresses and sampling points once (helps if markers off-screen)
+                        try {
+                            const bounds = new google.maps.LatLngBounds();
+                            if (resRoute.data.address1 && resRoute.data.address1.geocoded)
+                                bounds.extend(new google.maps.LatLng(resRoute.data.address1.geocoded.lat, resRoute.data.address1.geocoded.lng));
+                            if (resRoute.data.address2 && resRoute.data.address2.geocoded)
+                                bounds.extend(new google.maps.LatLng(resRoute.data.address2.geocoded.lat, resRoute.data.address2.geocoded.lng));
+                            resRoute.data.route_sampling_points.slice(0, 200).forEach(pt => {
+                                if (typeof pt.lat === 'number' && typeof pt.lng === 'number') {
+                                    bounds.extend(new google.maps.LatLng(pt.lat, pt.lng));
+                                }
+                            });
+                            map.fitBounds(bounds);
+                        } catch (e) {
+                            console.warn('[Sampling] Failed to fit bounds:', e);
+                        }
+                    }
+                } else {
+                    console.warn('[Sampling] route_sampling_points key missing in response');
+                    // Fallback: decode route overview polyline and render sparse points
+                    try {
+                        const poly = resRoute.data.route && resRoute.data.route.overview_polyline;
+                        const pts = decodePolyline(poly);
+                        if (pts && pts.length) {
+                            const step = Math.max(1, Math.floor(pts.length / 40));
+                            const fallbackSamples = pts.filter((_, i) => i % step === 0);
+                            renderSampledPoints(fallbackSamples.map(p => ({ lat: p.lat, lng: p.lng })), map, '#d50000');
+                        }
+                    } catch (e) {
+                        console.warn('[Sampling] Polyline fallback failed:', e);
+                    }
+                }
             }, 100);
         }
 
@@ -1347,6 +1524,20 @@ document.getElementById('searchForm').addEventListener('submit', async (e) => {
                     ${mp2.rating ? `⭐ ${mp2.rating}/5<br>` : ''}
                     🚇 Travel times: ${Math.round(mp2.time_from_address1/60)}min / ${Math.round(mp2.time_from_address2/60)}min<br>
                     ⚖️ Difference: ${mp2.time_difference_minutes} minutes
+                </div>
+            `);
+        }
+        // If route algorithm returned minimax metrics but no optimal place, still show a card for its point
+        if (okRoute && !resRoute.data.optimal_meeting_point && resRoute.data.route_minimax_metrics && resRoute.data.route_midpoint) {
+            const mm = resRoute.data.route_minimax_metrics;
+            const pt = resRoute.data.route_midpoint;
+            summaries.push(`
+                <div class="result-item">
+                    <h4>🎯 Minimax Point (Route)</h4>
+                    <strong>Transit Route Point</strong><br>
+                    📍 (${pt.lat.toFixed(5)}, ${pt.lng.toFixed(5)})<br>
+                    🚇 Max travel time: ${mm.max_travel_time_minutes || (mm.max_travel_time_seconds ? Math.round(mm.max_travel_time_seconds/60) : '?')} min<br>
+                    ⚖️ Difference: ${mm.time_difference_minutes || (mm.time_difference_seconds ? Math.round(mm.time_difference_seconds/60) : '?')} min
                 </div>
             `);
         }
@@ -1744,6 +1935,5 @@ function createPOIContent(place) {
     `;
 }
 
-// Make functions globally available for the HTML
-window.closeAllInfoWindows = closeAllInfoWindows;
-window.applyFilters = applyFilters;
+// Ensure the callback is globally accessible for Google Maps async loader
+window.initMaps = initMaps;
