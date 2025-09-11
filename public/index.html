@@ -88,13 +88,13 @@
         (function bootstrap() {
             // Try same-origin first; API server sets CORS for browser use
             const defaultCandidates = [
-                // Same-origin relative (works when served behind a proxy)
-                '/api/config',
-                // Common local dev ports
+                // Common local dev ports first (most likely to succeed during dev)
                 'http://localhost:5001/api/config',
                 'http://127.0.0.1:5001/api/config',
                 'http://localhost:5000/api/config',
-                'http://127.0.0.1:5000/api/config'
+                'http://127.0.0.1:5000/api/config',
+                // Same-origin relative (works when served behind a proxy)
+                '/api/config'
             ];
 
             async function discoverConfig(urls) {
@@ -123,32 +123,31 @@
                     }
                     // Load main app script next so it can read window.API_BASE
                     var app = document.createElement('script');
-                    app.src = 'scripts/main.js?v=13';
-                    app.defer = true;
+                    app.src = 'scripts/main.js?v=16';
+                    // For dynamically inserted scripts, set async=false to ensure execution before onload
+                    app.async = false;
                     app.onload = function() {
                         if (window.setApiBase && window.API_BASE) {
                             window.setApiBase(window.API_BASE);
                         }
+                        // Load Google Maps only after main.js has executed (window.initMaps available)
+                        if (config.data.googleMapsApiKey) {
+                            var gms = document.createElement('script');
+                            gms.async = true;
+                            gms.src = 'https://maps.googleapis.com/maps/api/js?key=' +
+                                encodeURIComponent(config.data.googleMapsApiKey) +
+                                '&libraries=geometry,places&loading=async&v=weekly&callback=initMaps';
+                            gms.onerror = function() {
+                                console.error('Failed to load Google Maps API');
+                                document.body.insertAdjacentHTML('beforeend', '<div style="position: fixed; top: 10px; right: 10px; background: #f44336; color: white; padding: 10px; border-radius: 4px;">❌ Google Maps API failed to load</div>');
+                            };
+                            document.head.appendChild(gms);
+                        } else {
+                            console.error('Google Maps API key not available');
+                            document.body.insertAdjacentHTML('beforeend', '<div style="position: fixed; top: 10px; right: 10px; background: #ff9800; color: white; padding: 10px; border-radius: 4px;">⚠️ Google Maps API key not configured</div>');
+                        }
                     };
                     document.head.appendChild(app);
-
-                    // Finally load Google Maps with the key
-                    if (config.data.googleMapsApiKey) {
-                        var gms = document.createElement('script');
-                        gms.async = true;
-                        gms.defer = true;
-                        gms.src = 'https://maps.googleapis.com/maps/api/js?key=' +
-                            encodeURIComponent(config.data.googleMapsApiKey) +
-                            '&libraries=geometry,places&loading=async&v=weekly&callback=initMaps';
-                        gms.onerror = function() {
-                            console.error('Failed to load Google Maps API');
-                            document.body.insertAdjacentHTML('beforeend', '<div style="position: fixed; top: 10px; right: 10px; background: #f44336; color: white; padding: 10px; border-radius: 4px;">❌ Google Maps API failed to load</div>');
-                        };
-                        document.head.appendChild(gms);
-                    } else {
-                        console.error('Google Maps API key not available');
-                        document.body.insertAdjacentHTML('beforeend', '<div style="position: fixed; top: 10px; right: 10px; background: #ff9800; color: white; padding: 10px; border-radius: 4px;">⚠️ Google Maps API key not configured</div>');
-                    }
                 })
                 .catch(err => {
                     console.error('Failed to get configuration:', err);

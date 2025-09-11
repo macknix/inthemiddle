@@ -1516,3 +1516,65 @@ class MiddlePointFinderTwo:
             pass
 
         return result
+
+
+if __name__ == '__main__':
+    """
+    Simple CLI demo:
+      - Loads GOOGLE_MAPS_API_KEY from environment (optionally .env if python-dotenv is installed)
+      - Accepts two addresses and an optional search radius
+      - Runs both algorithms and logs a compact summary plus pretty-prints JSON responses
+    """
+    import json
+    import argparse
+
+    # Light logging setup for CLI usage
+    logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
+
+    # Optionally load .env if available
+    try:
+        from dotenv import load_dotenv as _load_dotenv  # type: ignore
+        _load_dotenv()
+    except Exception:
+        pass
+
+    parser = argparse.ArgumentParser(description='Meet-in-the-middle demo (transit-based).')
+    parser.add_argument('--address1', default='Brooklyn, NY', help='First address (origin A)')
+    parser.add_argument('--address2', default='Manhattan, NY', help='Second address (origin B)')
+    parser.add_argument('--radius', type=int, default=2000, help='Search radius in meters (default: 2000)')
+    args = parser.parse_args()
+
+    api_key = os.getenv('GOOGLE_MAPS_API_KEY')
+    if not api_key or api_key == 'your_api_key_here':
+        print('ERROR: GOOGLE_MAPS_API_KEY is not set. Add it to your environment or .env file.')
+        raise SystemExit(1)
+
+    print('=== Demo: Meet in the Middle (Transit) ===')
+    print(f'Address 1: {args.address1}')
+    print(f'Address 2: {args.address2}')
+    print(f'Radius   : {args.radius} m')
+
+    svc = GoogleMapsService(api_key)
+    try:
+        mpf = MiddlePointFinder(svc)
+        mpf2 = MiddlePointFinderTwo(svc)
+
+        # Run default (geographic midpoint + places scoring)
+        t0 = perf_counter()
+        res_default = mpf.find_optimal_meeting_point(args.address1, args.address2, search_radius=args.radius)
+        dt_default = (perf_counter() - t0) * 1000.0
+        print(f'-- Default algorithm: success={res_default.get("success")} time_ms={dt_default:.1f}')
+        print(json.dumps(res_default, indent=2)[:4000])  # truncate for brevity
+
+        # Run route-based minimax
+        t1 = perf_counter()
+        res_route = mpf2.find_optimal_meeting_point(args.address1, args.address2, search_radius=args.radius)
+        dt_route = (perf_counter() - t1) * 1000.0
+        print(f'-- Route-based algorithm: success={res_route.get("success")} time_ms={dt_route:.1f}')
+        print(json.dumps(res_route, indent=2)[:4000])  # truncate for brevity
+
+    finally:
+        try:
+            svc.cleanup()
+        except Exception:
+            pass

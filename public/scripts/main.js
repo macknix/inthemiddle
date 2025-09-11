@@ -320,33 +320,7 @@ function displayRoutesWithRenderers(address1, address2, meetingPoint, rendererA,
                 }
             }, 500);
         } else {
-            console.error('Route 1 request failed:', status);
-            // Try driving mode as fallback
-            console.log('Trying driving mode for route 1...');
-            directionsService.route({
-                origin: { lat: address1.lat, lng: address1.lng },
-                destination: { lat: meetingPoint.lat, lng: meetingPoint.lng },
-                travelMode: google.maps.TravelMode.DRIVING
-            }, (result2, status2) => {
-                console.log('Route 1 driving fallback response:', status2, result2);
-                if (status2 === 'OK') {
-                    rendererA.setMap(map);
-                    rendererA.setDirections(result2);
-                    console.log('Route 1 displayed with driving mode');
-                    
-                    // Add click listener
-                    setTimeout(() => {
-                        try {
-                            const route = result2.routes[0];
-                            addRouteClickListener(rendererA, route, `Route from Address A (Driving)${labelSuffix ? ' - ' + labelSuffix : ''}`, colorA);
-                        } catch (e) {
-                            console.error('Error adding click listener to route 1 (driving):', e);
-                        }
-                    }, 500);
-                } else {
-                    console.error('Route 1 driving mode also failed:', status2);
-                }
-            });
+            console.error('Route 1 request failed', status);
         }
     });
     
@@ -377,33 +351,7 @@ function displayRoutesWithRenderers(address1, address2, meetingPoint, rendererA,
                 }
             }, 500);
         } else {
-            console.error('Route 2 request failed:', status);
-            // Try driving mode as fallback
-            console.log('Trying driving mode for route 2...');
-            directionsService.route({
-                origin: { lat: address2.lat, lng: address2.lng },
-                destination: { lat: meetingPoint.lat, lng: meetingPoint.lng },
-                travelMode: google.maps.TravelMode.DRIVING
-            }, (result2, status2) => {
-                console.log('Route 2 driving fallback response:', status2, result2);
-                if (status2 === 'OK') {
-                    rendererB.setMap(map);
-                    rendererB.setDirections(result2);
-                    console.log('Route 2 displayed with driving mode');
-                    
-                    // Add click listener
-                    setTimeout(() => {
-                        try {
-                            const route = result2.routes[0];
-                            addRouteClickListener(rendererB, route, `Route from Address B (Driving)${labelSuffix ? ' - ' + labelSuffix : ''}`, colorB);
-                        } catch (e) {
-                            console.error('Error adding click listener to route 2 (driving):', e);
-                        }
-                    }, 500);
-                } else {
-                    console.error('Route 2 driving mode also failed:', status2);
-                }
-            });
+            console.error('Route 2 request', status);
         }
     });
 }
@@ -1432,6 +1380,7 @@ document.getElementById('searchForm').addEventListener('submit', async (e) => {
         const okDefault = respDefault.ok && resDefault && resDefault.success && resDefault.data;
         const okRoute = respRoute.ok && resRoute && resRoute.success && resRoute.data;
 
+        // Only show a single error when both algorithms fail; no map overlays.
         if (!okDefault && !okRoute) {
             resultsDiv.innerHTML = `
                 <div class="error">❌ Error: ${
@@ -1457,6 +1406,13 @@ document.getElementById('searchForm').addEventListener('submit', async (e) => {
         // Then overlay route-midpoint (purple/green), without duplicating businesses
         if (okRoute) {
             setTimeout(() => {
+                // Skip overlay entirely if the route algorithm didn't produce a polyline or samples
+                const polyline = resRoute.data.route && resRoute.data.route.overview_polyline;
+                const hasSamples = Array.isArray(resRoute.data.route_sampling_points) && resRoute.data.route_sampling_points.length > 0;
+                if (!polyline && !hasSamples) {
+                    console.log('[Route overlay] No polyline or samples; skipping overlay rendering.');
+                    return;
+                }
                 displayResultsOnMap(resRoute.data, {
                     renderers: { A: directionsRendererAlt1, B: directionsRendererAlt2 },
                     colors: { A: '#9c27b0', B: '#0f9d58' },
@@ -1472,6 +1428,7 @@ document.getElementById('searchForm').addEventListener('submit', async (e) => {
                         // Fallback: generate sparse samples from overview polyline
                         try {
                             const poly = resRoute.data.route && resRoute.data.route.overview_polyline;
+                            if (!poly) return; // no polyline to sample from
                             const pts = decodePolyline(poly);
                             if (pts && pts.length) {
                                 const step = Math.max(1, Math.floor(pts.length / 40));
@@ -1507,6 +1464,7 @@ document.getElementById('searchForm').addEventListener('submit', async (e) => {
                     // Fallback: decode route overview polyline and render sparse points
                     try {
                         const poly = resRoute.data.route && resRoute.data.route.overview_polyline;
+                        if (!poly) return; // no polyline to sample from
                         const pts = decodePolyline(poly);
                         if (pts && pts.length) {
                             const step = Math.max(1, Math.floor(pts.length / 40));
@@ -1562,7 +1520,15 @@ document.getElementById('searchForm').addEventListener('submit', async (e) => {
                 </div>
             `);
         }
-        resultsDiv.innerHTML = summaries.join('');
+        if (summaries.length > 0) {
+            resultsDiv.innerHTML = summaries.join('');
+        } else {
+            resultsDiv.innerHTML = `
+                <div class="error">
+                    ⚠️ Oops :( no meeting point was found.
+                </div>
+            `;
+        }
 
     } catch (error) {
         console.error('CATCH BLOCK TRIGGERED:', error);
