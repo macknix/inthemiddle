@@ -5,6 +5,10 @@ import math
 import datetime as _dt
 import asyncio
 import concurrent.futures
+import logging
+import os
+from time import perf_counter
+logger = logging.getLogger(__name__)
 
 
 # --- Module-level constants ---
@@ -23,7 +27,15 @@ class GoogleMapsService:
         if not api_key or api_key == "your_api_key_here":
             raise ValueError("Valid Google Maps API key is required")
         self.client = googlemaps.Client(key=api_key)
-        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=10)
+        # Allow tuning max worker threads via env (default 10)
+        max_workers = 10
+        try:
+            mw = int(os.getenv('GMAPS_MAX_WORKERS', '10'))
+            if mw >= 1:
+                max_workers = mw
+        except Exception:
+            pass
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers)
     
     def cleanup(self):
         """Clean up resources"""
@@ -46,7 +58,7 @@ class GoogleMapsService:
                 }
             return None
         except Exception as e:
-            print(f"Geocoding error: {e}")
+            logging.getLogger(__name__).warning("Geocoding error for address '%s': %s", address, e)
             return None
     
     def get_transit_time(self, origin: Dict, destination: Dict, departure_time=None) -> Optional[int]:
@@ -72,7 +84,7 @@ class GoogleMapsService:
                 return duration
             return None
         except Exception as e:
-            print(f"Transit time error: {e}")
+            logging.getLogger(__name__).warning("Transit time error: %s", e)
             return None
 
     def get_fastest_transit_route(self, origin: Dict, destination: Dict, departure_time=None) -> Optional[Dict]:
@@ -116,7 +128,7 @@ class GoogleMapsService:
                 'duration_seconds': total_duration
             }
         except Exception as e:
-            print(f"Transit route error: {e}")
+            logging.getLogger(__name__).warning("Directions (fastest transit route) error: %s", e)
             return None
     
     def find_places_nearby(self, location: Dict, radius: int = 1000, place_type: str = "point_of_interest") -> List[Dict]:
@@ -154,7 +166,7 @@ class GoogleMapsService:
             
             return places
         except Exception as e:
-            print(f"Places search error: {e}")
+            logging.getLogger(__name__).warning("Places search error: %s", e)
             return []
 
     def get_transit_times_matrix(self, origins: List[Dict], destinations: List[Dict], departure_time=None) -> Optional[List[List[Optional[int]]]]:
@@ -175,33 +187,61 @@ class GoogleMapsService:
             cols = len(destinations)
             matrix: List[List[Optional[int]]] = [[None for _ in range(cols)] for _ in range(rows)]
 
-            # Process destinations in chunks
-            for start in range(0, cols, DISTANCE_MATRIX_MAX_DEST):
-                end = min(start + DISTANCE_MATRIX_MAX_DEST, cols)
+            # Determine per-request settings
+            try:
+                chunk_size = int(os.getenv('DM_MAX_DEST', str(DISTANCE_MATRIX_MAX_DEST)))
+                if chunk_size < 1:
+                    chunk_size = DISTANCE_MATRIX_MAX_DEST
+            except Exception:
+                chunk_size = DISTANCE_MATRIX_MAX_DEST
+            try:
+                max_parallel = int(os.getenv('DM_PARALLEL_CHUNKS', '3'))
+                if max_parallel < 1:
+                    max_parallel = 1
+            except Exception:
+                max_parallel = 3
+
+            # Build chunks
+            chunks = []  # list of (start_index, dest_strs)
+            for start in range(0, cols, chunk_size):
+                end = min(start + chunk_size, cols)
                 dest_chunk = destinations[start:end]
                 dest_strs = [fmt(d) for d in dest_chunk]
-                dm = self.client.distance_matrix(
-                    origins=origin_strs,
-                    destinations=dest_strs,
-                    mode="transit",
-                    departure_time=departure_time,
-                )
-                if not dm or 'rows' not in dm:
-                    continue
-                dm_rows = dm.get('rows', [])
-                for i, row in enumerate(dm_rows):
-                    elements = row.get('elements', [])
-                    for j, el in enumerate(elements):
-                        status = el.get('status')
-                        dur = el.get('duration', {}).get('value') if el else None
-                        if status == 'OK' and dur is not None:
-                            matrix[i][start + j] = dur
-                        else:
-                            # Leave as None if not OK
-                            pass
+                chunks.append((start, dest_strs))
+
+            # Process chunks in parallel windows to limit concurrency
+            def fetch_chunk(start_idx: int, dests: List[str]):
+                try:
+                    return start_idx, self.client.distance_matrix(
+                        origins=origin_strs,
+                        destinations=dests,
+                        mode="transit",
+                        departure_time=departure_time,
+                    )
+                except Exception as e:
+                    logger.warning("Distance Matrix chunk failed at start %s: %s", start_idx, e)
+                    return start_idx, None
+
+            for i in range(0, len(chunks), max_parallel):
+                window = chunks[i:i+max_parallel]
+                futures = [self.executor.submit(fetch_chunk, start, dests) for (start, dests) in window]
+                for fut in concurrent.futures.as_completed(futures):
+                    start_idx, dm = fut.result()
+                    if not dm or 'rows' not in dm:
+                        continue
+                    dm_rows = dm.get('rows', [])
+                    for r_i, row in enumerate(dm_rows):
+                        elements = row.get('elements', [])
+                        for j, el in enumerate(elements):
+                            status = el.get('status') if el else None
+                            dur = el.get('duration', {}).get('value') if el else None
+                            if status == 'OK' and dur is not None:
+                                # start_idx + j maps element j in this chunk to absolute column
+                                if 0 <= r_i < rows and 0 <= (start_idx + j) < cols:
+                                    matrix[r_i][start_idx + j] = dur
             return matrix
         except Exception as e:
-            print(f"Distance Matrix error: {e}")
+            logging.getLogger(__name__).warning("Distance Matrix error: %s", e)
             return None
 
     def get_places_by_category(self, location: Dict, radius: int = 1000, categories: List[str] = None) -> Dict[str, List[Dict]]:
@@ -441,11 +481,16 @@ class MiddlePointFinder:
         
         try:
             # Geocode both addresses in parallel
+            t_geocode_start = perf_counter()
             geocode_tasks = [
                 self.maps_service.geocode_address_async(address1),
                 self.maps_service.geocode_address_async(address2)
             ]
             location1, location2 = await asyncio.gather(*geocode_tasks)
+            logger.info(
+                "Time to geocode addresses (MiddlePointFinder) = %.1f ms",
+                (perf_counter() - t_geocode_start) * 1000.0
+            )
             
             if not location1:
                 result['error'] = f"Could not geocode address: {address1}"
@@ -476,10 +521,17 @@ class MiddlePointFinder:
                     categories=['restaurant', 'cafe', 'bar', 'shopping_mall', 'store', 'park', 'tourist_attraction', 'gym', 'library']
                 )
             ]
-            
+            t_mid_ctx = perf_counter()
             time1_to_mid, time2_to_mid, nearby_places, categorized_businesses = await asyncio.gather(*parallel_tasks)
+            logger.info(
+                "Time to gather midpoint context (MiddlePointFinder) = %.1f ms; nearby=%s, categories=%s",
+                (perf_counter() - t_mid_ctx) * 1000.0,
+                len(nearby_places) if nearby_places else 0,
+                len(categorized_businesses or {})
+            )
             
             # Evaluate places using shared helper
+            t_score_start = perf_counter()
             best_meeting_point = await _select_best_place(
                 self.maps_service,
                 nearby_places,
@@ -487,6 +539,10 @@ class MiddlePointFinder:
                 location2,
                 fairness_weight=PLACE_FAIRNESS_WEIGHT,
                 efficiency_weight=PLACE_EFFICIENCY_WEIGHT,
+            )
+            logger.info(
+                "Time to score nearby places (MiddlePointFinder) = %.1f ms",
+                (perf_counter() - t_score_start) * 1000.0
             )
             
             # Prepare result
@@ -523,6 +579,9 @@ class MiddlePointFinderTwo:
 
     def __init__(self, maps_service: GoogleMapsService):
         self.maps_service = maps_service
+        # Simple per-request cache for Distance Matrix results: {(lat,lng)->(t1,t2)}
+        # Keys use rounded lat/lng to avoid micro-duplication.
+        self._dm_cache = {}
     # ----------------------- New minimax (max-travel-time) search logic -----------------------
     @staticmethod
     def _interpolate_point(p1: Dict, p2: Dict, frac: float) -> Dict:
@@ -597,10 +656,15 @@ class MiddlePointFinderTwo:
             return []
         if lateral_offsets_m is None:
             lateral_offsets_m = [-800, -400, -200, 0, 200, 400, 800]
+        # Pre-compute cumulative distances and total length
         cum, total = self._cumulative_distances(points)
         if total == 0:
-            return [points[0]]
-        fracs = [i/(fractions-1) for i in range(fractions)] if fractions > 1 else [0.5]
+            # Degenerate polyline; just return the single point
+            base = points[0]
+            return [{'lat': base['lat'], 'lng': base['lng'], 'route_fraction': 0.0, 'lateral_offset_m': 0}]
+        # Evenly spaced fractions along the route
+        n = max(2, int(fractions))
+        fracs = [i / (n - 1) for i in range(n)]
         candidates: List[Dict] = []
         for f in fracs:
             base_pt = self._point_at_fraction(points, cum, total, f)
@@ -637,32 +701,66 @@ class MiddlePointFinderTwo:
         loc2: Dict,
         candidates: List[Dict],
     ) -> List[Dict]:
-        """Batch evaluate candidates; return list with metrics using minimax objective (minimize max travel time)."""
+        """Batch evaluate candidates with a small in-memory cache to avoid duplicate calls.
+        Returns list with metrics using minimax objective (minimize max travel time)."""
         if not candidates:
             return []
-        dm = await self.maps_service.get_transit_times_matrix_async(
-            [loc1, loc2], candidates, departure_time=_dt.datetime.now()
-        )
-        results: List[Dict] = []
-        for idx, pt in enumerate(candidates):
-            t1 = dm[0][idx] if dm and dm[0][idx] is not None else None
-            t2 = dm[1][idx] if dm and dm[1][idx] is not None else None
-            if t1 is None or t2 is None:
-                continue
-            worst = max(t1, t2)
-            diff = abs(t1 - t2)
-            results.append({
-                'point': pt,
-                'time_from_address1': t1,
-                'time_from_address2': t2,
-                'max_travel_time_seconds': worst,
-                'max_travel_time_minutes': round(worst / 60, 1),
-                'time_difference_seconds': diff,
-                'time_difference_minutes': round(diff / 60, 1),
-                'total_travel_time_seconds': t1 + t2,
-                'total_travel_time_minutes': round((t1 + t2) / 60, 1),
-            })
-        return results
+
+        # Split into cached and uncached destinations
+        def k(pt: Dict) -> Tuple[float, float]:
+            return (round(float(pt['lat']), 5), round(float(pt['lng']), 5))
+
+        uncached: List[Dict] = []
+        cached_results: List[Dict] = []
+        for pt in candidates:
+            key = k(pt)
+            pair = self._dm_cache.get(key)
+            if pair is not None:
+                t1, t2 = pair
+                worst = max(t1, t2)
+                diff = abs(t1 - t2)
+                cached_results.append({
+                    'point': pt,
+                    'time_from_address1': t1,
+                    'time_from_address2': t2,
+                    'max_travel_time_seconds': worst,
+                    'max_travel_time_minutes': round(worst / 60, 1),
+                    'time_difference_seconds': diff,
+                    'time_difference_minutes': round(diff / 60, 1),
+                    'total_travel_time_seconds': t1 + t2,
+                    'total_travel_time_minutes': round((t1 + t2) / 60, 1),
+                })
+            else:
+                uncached.append(pt)
+
+        fresh_results: List[Dict] = []
+        if uncached:
+            dm = await self.maps_service.get_transit_times_matrix_async(
+                [loc1, loc2], uncached, departure_time=_dt.datetime.now()
+            )
+            if dm and len(dm) >= 2:
+                for idx, pt in enumerate(uncached):
+                    t1 = dm[0][idx] if dm[0][idx] is not None else None
+                    t2 = dm[1][idx] if dm[1][idx] is not None else None
+                    if t1 is None or t2 is None:
+                        continue
+                    # Populate cache and results
+                    self._dm_cache[k(pt)] = (t1, t2)
+                    worst = max(t1, t2)
+                    diff = abs(t1 - t2)
+                    fresh_results.append({
+                        'point': pt,
+                        'time_from_address1': t1,
+                        'time_from_address2': t2,
+                        'max_travel_time_seconds': worst,
+                        'max_travel_time_minutes': round(worst / 60, 1),
+                        'time_difference_seconds': diff,
+                        'time_difference_minutes': round(diff / 60, 1),
+                        'total_travel_time_seconds': t1 + t2,
+                        'total_travel_time_minutes': round((t1 + t2) / 60, 1),
+                    })
+
+        return cached_results + fresh_results
 
     async def _minimax_search_along_route(
         self,
@@ -860,8 +958,8 @@ class MiddlePointFinderTwo:
         around top_k_refine promising fractions. Returns (best_metrics, all_sample_evals_for_payload).
         """
         if lateral_offsets is None:
-            # Reduced offsets to limit Distance Matrix destinations while keeping variety
-            lateral_offsets = [-400.0, 0.0, 400.0]
+            # Global pass: centerline only; offsets will be explored during local refinement
+            lateral_offsets = [0.0]
         if not points:
             return None, []
         try:
@@ -877,8 +975,14 @@ class MiddlePointFinderTwo:
             solo = await self._evaluate_minimax_candidates(loc1, loc2, [points[0]])
             return (solo[0] if solo else None), []
 
-        # --- Global uniform sampling ---
-        frac_list = [i/(global_fractions-1) for i in range(global_fractions)] if global_fractions > 1 else [0.5]
+        # --- Global uniform sampling (dynamic density based on route length) ---
+        # Aim ~500m spacing; clamp to a sensible range [20, 80]
+        try:
+            target_spacing_m = 500.0
+            dyn_n = int(max(20, min(80, round(max(2, total / target_spacing_m)))))
+        except Exception:
+            dyn_n = global_fractions
+        frac_list = [i/(dyn_n-1) for i in range(dyn_n)] if dyn_n > 1 else [0.5]
         global_candidates: List[Dict] = []
         for f in frac_list:
             base = self._point_at_fraction(points, cum, total, f)
@@ -902,14 +1006,23 @@ class MiddlePointFinderTwo:
                 global_candidates.append(pt)
 
         # Evaluate global candidates in batch
+        t_global_dm = perf_counter()
         global_evals = await self._evaluate_minimax_candidates(loc1, loc2, global_candidates)
+        try:
+            logger.info(
+                "Time to evaluate global samples (Route-based, DM batch) = %.1f ms; candidates=%s",
+                (perf_counter() - t_global_dm) * 1000.0,
+                len(global_candidates)
+            )
+        except Exception:
+            pass
         # Index by (fraction, offset)
         eval_map: Dict[Tuple[float, float], Dict] = {}
         for ev in global_evals:
             key = (round(ev['point']['route_fraction'], 6), float(ev['point']['lateral_offset_m']))
             eval_map[key] = ev
 
-        # Determine best per fraction (choose offset with lowest max time) to rank fractions
+        # Determine best per fraction (with only centerline, this is straightforward)
         per_fraction_best: Dict[float, Dict] = {}
         for ev in global_evals:
             f = ev['point']['route_fraction']
@@ -1028,14 +1141,27 @@ class MiddlePointFinderTwo:
                         y = _np.append(y, center_ev['max_travel_time_seconds'])
                         added_centers += 1
                 try:
-                    print(f"[BO-Local] center={round(center_frac,4)} it={it+1} added_centers={added_centers} best={round(float(_np.min(y))/60.0,1)}min window=({round(start,3)},{round(end,3)})")
+                    logger.debug(
+                        "[BO-Local] center=%s it=%s added_centers=%s best=%s min window=(%s,%s)",
+                        round(center_frac, 4), it + 1, added_centers,
+                        round(float(_np.min(y)) / 60.0, 1), round(start, 3), round(end, 3)
+                    )
                 except Exception:
                     pass
             return
 
         # Run refinements sequentially (could be parallel but sequence for rate limiting)
+        t_local_refine = perf_counter()
         for f in top_fracs:
             await refine_fraction(f)
+        try:
+            logger.info(
+                "Time to locally refine around top fractions (Route-based) = %.1f ms; centers=%s",
+                (perf_counter() - t_local_refine) * 1000.0,
+                len(top_fracs)
+            )
+        except Exception:
+            pass
 
         # Collate all evaluations
         all_evals = list(eval_map.values())
@@ -1052,7 +1178,10 @@ class MiddlePointFinderTwo:
         clustered_spaced = self._thin_for_visualization(all_evals, fraction_tol=0.002, base_min_spacing_m=300.0)
         final_ct = len(clustered_spaced)
         try:
-            print(f"[RouteSampling] Thinning reduced samples from {original_ct} to {final_ct} (fraction_tol=0.002, min_spacing=300m)")
+            logger.info(
+                "[RouteSampling] Thinned samples: %s -> %s (fraction_tol=0.002, min_spacing=300m)",
+                original_ct, final_ct
+            )
         except Exception:
             pass
         payload = self._format_samples_payload(clustered_spaced)
@@ -1216,10 +1345,16 @@ class MiddlePointFinderTwo:
         }
 
         try:
+            t_total_start = perf_counter()
             # Geocode both addresses in parallel
+            t_geo = perf_counter()
             loc1_task = self.maps_service.geocode_address_async(address1)
             loc2_task = self.maps_service.geocode_address_async(address2)
             location1, location2 = await asyncio.gather(loc1_task, loc2_task)
+            logger.info(
+                "Time to geocode addresses (Route-based) = %.1f ms",
+                (perf_counter() - t_geo) * 1000.0
+            )
 
             if not location1:
                 result['error'] = f"Could not geocode address: {address1}"
@@ -1229,7 +1364,12 @@ class MiddlePointFinderTwo:
                 return result
 
             # Get fastest transit route and perform minimax search along it
+            t_route = perf_counter()
             route_info = await self.maps_service.get_fastest_transit_route_async(location1, location2)
+            logger.info(
+                "Time to fetch fastest route (Route-based) = %.1f ms",
+                (perf_counter() - t_route) * 1000.0
+            )
             if not route_info or not route_info.get('points'):
                 fallback_mid = MiddlePointFinder(self.maps_service).calculate_geographic_midpoint(location1, location2)
                 minimax_point = fallback_mid
@@ -1238,6 +1378,7 @@ class MiddlePointFinderTwo:
             else:
                 # Try Bayesian optimization first; fallback to deterministic if it fails
                 # Global uniform sampling + local Bayesian refinement across entire route
+                t_sample = perf_counter()
                 best_eval, sampled_points_payload = await self._global_and_local_sampling_minimax(
                     route_info['points'], location1, location2,
                     global_fractions=50,
@@ -1247,6 +1388,11 @@ class MiddlePointFinderTwo:
                     local_iterations=8,
                     local_batch_ei=3,
                     ei_xi_seconds=5.0,
+                )
+                logger.info(
+                    "Time to sample and refine along route (Route-based) = %.1f ms; samples=%s",
+                    (perf_counter() - t_sample) * 1000.0,
+                    len(sampled_points_payload) if sampled_points_payload else 0
                 )
                 if sampled_points_payload is None:
                     sampled_points_payload = []
@@ -1268,8 +1414,7 @@ class MiddlePointFinderTwo:
                 # Debug logging of sampling points count and a first sample
                 try:
                     sample_count = len(sampled_points_payload)
-                    first_sample = sampled_points_payload[0] if sample_count else None
-                    print(f"[RouteSampling] Generated {sample_count} sampling points (evaluated + fallback). First sample: {first_sample}")
+                    logger.debug("[RouteSampling] Total sampling points prepared: %s", sample_count)
                 except Exception:
                     pass
                 minimax_metrics = best_eval
@@ -1292,13 +1437,26 @@ class MiddlePointFinderTwo:
                 )
             ]
 
+            t_ctx = perf_counter()
             time1_to_mid, time2_to_mid, nearby_places, categorized_businesses = await asyncio.gather(*tasks)
+            logger.info(
+                "Time to gather context for chosen point (Route-based) = %.1f ms; nearby=%s, categories=%s",
+                (perf_counter() - t_ctx) * 1000.0,
+                len(nearby_places) if nearby_places else 0,
+                len(categorized_businesses or {})
+            )
             # Minimax evaluation for places
+            t_places = perf_counter()
             best_meeting_point = await self._select_best_place_minimax(location1, location2, nearby_places)
+            logger.info(
+                "Time to score places (Route-based) = %.1f ms",
+                (perf_counter() - t_places) * 1000.0
+            )
 
             # Sort and keep a few alternatives (by minimax)
             alternatives: List[Dict] = []
             if nearby_places:
+                t_alt = perf_counter()
                 dm_alt = await self.maps_service.get_transit_times_matrix_async([location1, location2], nearby_places, departure_time=_dt.datetime.now())
                 scored = []
                 for i, p in enumerate(nearby_places):
@@ -1319,6 +1477,10 @@ class MiddlePointFinderTwo:
                     })
                 scored.sort(key=lambda x: x['max_travel_time_seconds'])
                 alternatives = scored[:5]
+                logger.info(
+                    "Time to score alternatives (Route-based, DM batch) = %.1f ms",
+                    (perf_counter() - t_alt) * 1000.0
+                )
 
             result['success'] = True
             result['data'] = {
@@ -1344,5 +1506,13 @@ class MiddlePointFinderTwo:
 
         except Exception as e:
             result['error'] = f"Unexpected error: {str(e)}"
+
+        try:
+            logger.info(
+                "Total time for route-based middle point = %.1f ms",
+                (perf_counter() - t_total_start) * 1000.0
+            )
+        except Exception:
+            pass
 
         return result

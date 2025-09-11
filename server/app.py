@@ -1,9 +1,10 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, g
 from flask_cors import CORS
 from dotenv import load_dotenv
 import os
 import logging
 import json
+from time import perf_counter
 try:
     from .maps_service import GoogleMapsService, MiddlePointFinder, MiddlePointFinderTwo
 except ImportError:
@@ -25,6 +26,60 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
+
+# Per-request timing: record start time and log duration on completion
+@app.before_request
+def _start_timer():
+    try:
+        g._start_time = perf_counter()
+    except Exception:
+        g._start_time = None
+
+
+@app.after_request
+def _log_request_duration(response):
+    try:
+        start = getattr(g, '_start_time', None)
+        if start is not None:
+            duration_ms = (perf_counter() - start) * 1000.0
+            # Include response time header for easy debugging/measurement
+            try:
+                response.headers['X-Process-Time-ms'] = f"{duration_ms:.1f}"
+            except Exception:
+                pass
+
+            # Concise structured log
+            logger.info(
+                "request completed: method=%s path=%s status=%s duration_ms=%.1f content_length=%s remote_addr=%s",
+                request.method,
+                request.full_path if request.query_string else request.path,
+                getattr(response, 'status_code', 'unknown'),
+                duration_ms,
+                response.calculate_content_length() if hasattr(response, 'calculate_content_length') else 'unknown',
+                request.remote_addr,
+            )
+    except Exception as e:
+        logger.debug(f"Failed to log request duration: {e}")
+    return response
+
+
+@app.teardown_request
+def _teardown_request_log(error=None):
+    # If an unhandled exception occurred, ensure we still log duration
+    if error is not None:
+        try:
+            start = getattr(g, '_start_time', None)
+            duration_ms = (perf_counter() - start) * 1000.0 if start is not None else None
+            logger.error(
+                "request error: method=%s path=%s duration_ms=%s error=%s",
+                request.method,
+                request.full_path if request.query_string else request.path,
+                f"{duration_ms:.1f}" if duration_ms is not None else 'unknown',
+                repr(error),
+            )
+        except Exception:
+            # Swallow any teardown logging issues
+            pass
 
 # Initialize services
 api_key = os.getenv('GOOGLE_MAPS_API_KEY')
@@ -155,7 +210,7 @@ def find_middle_point():
         if not isinstance(search_radius, int) or search_radius < 100 or search_radius > 10000:
             logger.error(f"Invalid search radius: {search_radius}")
             return jsonify({'error': 'search_radius must be between 100 and 10000 meters'}), 400
-        
+
         logger.info("Starting middle point calculation...")
         # Optional per-request override of algorithm
         algorithm = data.get('algorithm', None)
@@ -169,12 +224,17 @@ def find_middle_point():
                 finder = MiddlePointFinder(maps_service)
                 logger.info("Per-request algorithm override: default")
 
+        _algo_start = perf_counter()
         result = finder.find_optimal_meeting_point(
-            address1, 
-            address2, 
+            address1,
+            address2,
             search_radius
         )
-        logger.info(f"Middle point calculation completed")
+        _compute_ms = (perf_counter() - _algo_start) * 1000.0
+        app.logger.info(
+            "Time to find middle point = %.1f ms (algorithm=%s)",
+            _compute_ms, type(finder).__name__
+        )
         logger.info(f"Result success: {result.get('success', False)}")
 
         # Extra debug for route sampling points (route-midpoint algorithm)
@@ -200,10 +260,15 @@ def find_middle_point():
         
         logger.info("=== END FIND MIDDLE POINT REQUEST ===")
         
+        response = jsonify(result)
+        try:
+            response.headers['X-Compute-Time-ms'] = f"{_compute_ms:.1f}"
+        except Exception:
+            pass
         if result['success']:
-            return jsonify(result)
+            return response
         else:
-            return jsonify(result), 400
+            return response, 400
             
     except Exception as e:
         logger.error(f"Exception in find_middle_point: {str(e)}", exc_info=True)
