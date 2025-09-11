@@ -14,9 +14,6 @@ logger = logging.getLogger(__name__)
 # --- Module-level constants ---
 PLACE_FAIRNESS_WEIGHT = 0.7
 PLACE_EFFICIENCY_WEIGHT = 0.3
-ROUTE_CANDIDATE_FAIRNESS_WEIGHT = 0.6
-ROUTE_CANDIDATE_EFFICIENCY_WEIGHT = 0.4
-LONG_ROUTE_THRESHOLD_M = 15000  # 15 km
 DISTANCE_MATRIX_MAX_DEST = 25   # conservative chunk size for DM requests
 
 
@@ -67,8 +64,8 @@ class GoogleMapsService:
         Returns time in seconds
         """
         try:
-            origin_coords = f"{origin['lat']},{origin['lng']}"
-            dest_coords = f"{destination['lat']},{destination['lng']}"
+            origin_coords = self._fmt_coords(origin)
+            dest_coords = self._fmt_coords(destination)
             
             directions_result = self.client.directions(
                 origin=origin_coords,
@@ -93,8 +90,8 @@ class GoogleMapsService:
         Returns a dict with route summary, decoded polyline points, distance and duration.
         """
         try:
-            origin_coords = f"{origin['lat']},{origin['lng']}"
-            dest_coords = f"{destination['lat']},{destination['lng']}"
+            origin_coords = self._fmt_coords(origin)
+            dest_coords = self._fmt_coords(destination)
 
             directions_result = self.client.directions(
                 origin=origin_coords,
@@ -178,10 +175,7 @@ class GoogleMapsService:
             if not origins or not destinations:
                 return None
 
-            def fmt(pt: Dict) -> str:
-                return f"{pt['lat']},{pt['lng']}"
-
-            origin_strs = [fmt(o) for o in origins]
+            origin_strs = [self._fmt_coords(o) for o in origins]
             # Initialize matrix with None
             rows = len(origins)
             cols = len(destinations)
@@ -206,7 +200,7 @@ class GoogleMapsService:
             for start in range(0, cols, chunk_size):
                 end = min(start + chunk_size, cols)
                 dest_chunk = destinations[start:end]
-                dest_strs = [fmt(d) for d in dest_chunk]
+                dest_strs = [self._fmt_coords(d) for d in dest_chunk]
                 chunks.append((start, dest_strs))
 
             # Process chunks in parallel windows to limit concurrency
@@ -243,6 +237,12 @@ class GoogleMapsService:
         except Exception as e:
             logging.getLogger(__name__).warning("Distance Matrix error: %s", e)
             return None
+
+    # --- Small helpers reused across API methods ---
+    @staticmethod
+    def _fmt_coords(pt: Dict) -> str:
+        """Format a point dict {'lat','lng'} as 'lat,lng' string for Google APIs."""
+        return f"{pt['lat']},{pt['lng']}"
 
     def get_places_by_category(self, location: Dict, radius: int = 1000, categories: List[str] = None) -> Dict[str, List[Dict]]:
         """
@@ -717,19 +717,7 @@ class MiddlePointFinderTwo:
             pair = self._dm_cache.get(key)
             if pair is not None:
                 t1, t2 = pair
-                worst = max(t1, t2)
-                diff = abs(t1 - t2)
-                cached_results.append({
-                    'point': pt,
-                    'time_from_address1': t1,
-                    'time_from_address2': t2,
-                    'max_travel_time_seconds': worst,
-                    'max_travel_time_minutes': round(worst / 60, 1),
-                    'time_difference_seconds': diff,
-                    'time_difference_minutes': round(diff / 60, 1),
-                    'total_travel_time_seconds': t1 + t2,
-                    'total_travel_time_minutes': round((t1 + t2) / 60, 1),
-                })
+                cached_results.append(self._mm_metrics(pt, t1, t2))
             else:
                 uncached.append(pt)
 
@@ -746,19 +734,7 @@ class MiddlePointFinderTwo:
                         continue
                     # Populate cache and results
                     self._dm_cache[k(pt)] = (t1, t2)
-                    worst = max(t1, t2)
-                    diff = abs(t1 - t2)
-                    fresh_results.append({
-                        'point': pt,
-                        'time_from_address1': t1,
-                        'time_from_address2': t2,
-                        'max_travel_time_seconds': worst,
-                        'max_travel_time_minutes': round(worst / 60, 1),
-                        'time_difference_seconds': diff,
-                        'time_difference_minutes': round(diff / 60, 1),
-                        'total_travel_time_seconds': t1 + t2,
-                        'total_travel_time_minutes': round((t1 + t2) / 60, 1),
-                    })
+                    fresh_results.append(self._mm_metrics(pt, t1, t2))
 
         return cached_results + fresh_results
 
@@ -1279,20 +1255,8 @@ class MiddlePointFinderTwo:
                 continue
             worst = max(t1, t2)
             if worst < best_val:
-                diff = abs(t1 - t2)
                 best_val = worst
-                best = {
-                    **place,
-                    'time_from_address1': t1,
-                    'time_from_address2': t2,
-                    'max_travel_time_seconds': worst,
-                    'max_travel_time_minutes': round(worst / 60, 1),
-                    'time_difference_seconds': diff,
-                    'time_difference_minutes': round(diff / 60, 1),
-                    'total_travel_time_seconds': t1 + t2,
-                    'total_travel_time_minutes': round((t1 + t2) / 60, 1),
-                    'objective': 'minimax_max_travel_time'
-                }
+                best = {**place, **self._mm_metrics(None, t1, t2), 'objective': 'minimax_max_travel_time'}
         if best:
             return best
         # Fallback: attempt per-place directions for a small subset if DM failed
@@ -1309,20 +1273,8 @@ class MiddlePointFinderTwo:
                 continue
             worst = max(t1, t2)
             if worst < best_val:
-                diff = abs(t1 - t2)
                 best_val = worst
-                best = {
-                    **p,
-                    'time_from_address1': t1,
-                    'time_from_address2': t2,
-                    'max_travel_time_seconds': worst,
-                    'max_travel_time_minutes': round(worst / 60, 1),
-                    'time_difference_seconds': diff,
-                    'time_difference_minutes': round(diff / 60, 1),
-                    'total_travel_time_seconds': t1 + t2,
-                    'total_travel_time_minutes': round((t1 + t2) / 60, 1),
-                    'objective': 'minimax_max_travel_time'
-                }
+                best = {**p, **self._mm_metrics(None, t1, t2), 'objective': 'minimax_max_travel_time'}
         return best
 
     def find_optimal_meeting_point(self, address1: str, address2: str, search_radius: int = 2000) -> Dict:
@@ -1336,6 +1288,25 @@ class MiddlePointFinderTwo:
             return loop.run_until_complete(self.find_optimal_meeting_point_async(address1, address2, search_radius))
         finally:
             loop.close()
+
+    # --- Reusable metric constructor for minimax objective ---
+    @staticmethod
+    def _mm_metrics(point: Optional[Dict], t1: int, t2: int) -> Dict:
+        worst = max(t1, t2)
+        diff = abs(t1 - t2)
+        base = {
+            'time_from_address1': t1,
+            'time_from_address2': t2,
+            'max_travel_time_seconds': worst,
+            'max_travel_time_minutes': round(worst / 60, 1),
+            'time_difference_seconds': diff,
+            'time_difference_minutes': round(diff / 60, 1),
+            'total_travel_time_seconds': t1 + t2,
+            'total_travel_time_minutes': round((t1 + t2) / 60, 1),
+        }
+        if point is not None:
+            return {'point': point, **base}
+        return base
 
     async def find_optimal_meeting_point_async(self, address1: str, address2: str, search_radius: int = 2000) -> Dict:
         result = {

@@ -1,15 +1,15 @@
 # Backend - Server Directory
 
-This directory contains all backend Python code for the "Meet in the Middle" Flask application.
+Backend Python code for the "Meet in the Middle" Flask application. Provides REST endpoints and Google Maps integrations plus two algorithms for choosing a fair meeting point.
 
 ## 📁 Structure
 
 ```
 server/
 ├── 🐍 __init__.py          # Package initialization
-├── 🌐 app.py               # Main Flask application (API server)
-├── 🗺️ maps_service.py      # Google Maps API integration
-├── 📁 serve_map.py         # Static file server
+├── 🌐 app.py               # Flask API server (endpoints, config, timing)
+├── 🗺️ maps_service.py      # Google Maps integration + algorithms
+├── 📁 serve_map.py         # Static file server (serves ../public)
 └── 🧪 tests/
     ├── test_api.py         # API endpoint unit tests
     └── demo.py             # Demo scripts and examples
@@ -18,8 +18,8 @@ server/
 ## 🚀 Main Components
 
 ### `app.py` - Flask API Server
-- **Purpose**: Main Flask application providing REST API
-- **Port**: 5000
+- **Purpose**: REST API endpoints and request lifecycle logging
+- **Port**: 5000 (when run directly); 5001 when started by `run_dev.py`
 - **Endpoints**: Health check, geocoding, config, meeting point finding
 - **Features**: CORS enabled, error handling, environment/algorithm configuration
 
@@ -31,36 +31,36 @@ GET  /api/config           # Frontend config (API base, Maps API key presence)
 POST /api/find-middle-point # Find optimal meeting point (supports algorithm override)
 ```
 
-### `maps_service.py` - Google Maps Integration
-- **Purpose**: Wrapper for Google Maps APIs
-- **Classes**: `GoogleMapsService`, `MiddlePointFinder`, `MiddlePointFinderTwo`
-- **Features**: Geocoding, directions/transit times, places search, route midpoint along fastest transit path
+### `maps_service.py` - Google Maps + Algorithms
+- **Purpose**: Wrapper for Google Maps APIs and core algorithms
+- **Classes**: `GoogleMapsService`, `MiddlePointFinder` (geographic), `MiddlePointFinderTwo` (route-based minimax)
+- **Features**: Geocoding, Distance Matrix batching, Places search, polyline decoding, route sampling (global + local refinement), strict minimax objective
 
 **Key Classes:**
 ```python
 class GoogleMapsService:
-    # Direct Google Maps API integration
-  def geocode_address()
-  def get_transit_time()
-  def get_fastest_transit_route()  # returns overview polyline, distance, duration, decoded points
-  def search_nearby_places()
-  def decode_polyline()
+  # Geocoding, Directions (transit), Distance Matrix batching, Places
+  geocode_address()
+  get_transit_time()
+  get_fastest_transit_route()  # overview polyline, distance, duration, decoded points
+  find_places_nearby()
+  get_transit_times_matrix()
+  decode_polyline()
 
 class MiddlePointFinder:
-    # Business logic for finding meeting points
-    def find_optimal_meeting_point()
-    def calculate_transit_times()
+  # Default algorithm: geographic midpoint + Places composite score
+  find_optimal_meeting_point()
 
 class MiddlePointFinderTwo:
-  # Alternative algorithm using the midpoint along the fastest transit route
-  def find_optimal_meeting_point()
-  # Internally decodes route polyline and samples the 50% path-length point
+  # Route-based minimax: minimize max travel time along fastest transit route
+  # Uniform global sampling (with optional lateral offsets) + local refinements
+  find_optimal_meeting_point()
 ```
 
 ### `serve_map.py` - Static File Server
 - **Purpose**: Serves frontend files from `public/` directory
 - **Port**: 8082
-- **Features**: CORS headers, auto-browser opening, clean logging
+- **Features**: CORS headers, auto-open browser, clean logging
 
 ### `tests/` - Testing Suite
 
@@ -142,6 +142,8 @@ Content-Type: application/json
   "algorithm": "default" | "route-midpoint"  // optional; overrides env default
 }
 ```
+Per-request `algorithm` overrides the `MIDDLEPOINT_ALGORITHM` env default.
+
 **Response (default algorithm):**
 ```json
 {
@@ -166,7 +168,7 @@ Content-Type: application/json
 {
   "success": true,
   "data": {
-    "algorithm": "transit-route-midpoint",
+    "algorithm": "route-midpoint",
     "address1": { "input": "...", "geocoded": {"lat": 0, "lng": 0} },
     "address2": { "input": "...", "geocoded": {"lat": 0, "lng": 0} },
     "route": {
@@ -174,14 +176,17 @@ Content-Type: application/json
       "distance_meters": 12345,
       "duration_seconds": 1800
     },
-    "route_midpoint": { "lat": 0, "lng": 0 },
-    "route_midpoint_transit_times": {
+    "meeting_point": { "lat": 0, "lng": 0 },
+    "minimax_metrics": {
       "from_address1_seconds": 900,
-      "from_address2_seconds": 900
+      "from_address2_seconds": 900,
+      "max_travel_time_seconds": 900,
+      "time_difference_seconds": 0
     },
     "optimal_meeting_point": { /* best place with scores */ },
     "nearby_alternatives": [...],
-    "categorized_businesses": { ... }
+    "categorized_businesses": { ... },
+    "route_sampling_points": [ /* optional, for visualization */ ]
   }
 }
 ```
@@ -192,6 +197,10 @@ Content-Type: application/json
 ```bash
 GOOGLE_MAPS_API_KEY=your_google_maps_api_key_here
 MIDDLEPOINT_ALGORITHM=default        # or route-midpoint (optional)
+# Optional performance tuning
+DM_MAX_DEST=25
+DM_PARALLEL_CHUNKS=3
+GMAPS_MAX_WORKERS=10
 ```
 
 ### Google Maps APIs Required
@@ -213,20 +222,20 @@ python -m server.serve_map
 ```
 
 ### Algorithm Selection
-- Default algorithm: `MiddlePointFinder` (geographic midpoint seed)
-- Alternate algorithm: `MiddlePointFinderTwo` (midpoint along fastest transit route)
+- Default: `MiddlePointFinder` (geographic midpoint + composite scoring)
+- Alternate: `MiddlePointFinderTwo` (route-based strict minimax)
 
 You can select the algorithm in two ways:
 - Environment default: set `MIDDLEPOINT_ALGORITHM=default` or `route-midpoint`
 - Per-request override: include `{ "algorithm": "default" | "route-midpoint" }` in `/api/find-middle-point` body
 
-### Testing
+### Testing & Demo
 ```bash
 # Run unit tests
 python -m server.tests.test_api
 
-# Run demo scripts
-python -m server.tests.demo
+# Run in-file demo (requires API key)
+python server/maps_service.py
 
 # Test setup verification
 python test_setup.py
