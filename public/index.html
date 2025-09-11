@@ -83,35 +83,78 @@
         </div>
     </div>
 
-    <!-- Scripts -->
-    <script src="scripts/main.js?v=12"></script>
-    
-    <!-- Load Google Maps API dynamically with key from backend -->
+    <!-- Bootstrap: detect API base, load app and Google Maps -->
     <script>
-        // Load Google Maps API with key from backend
-        fetch('http://localhost:5001/api/config')
-            .then(response => response.json())
-            .then(config => {
-                if (config.success && config.data.googleMapsApiKey) {
-                    const script = document.createElement('script');
-                    script.async = true;
-                    script.defer = true;
-                    // Best-practice loading flags to improve performance and remove console warning
-                    script.src = `https://maps.googleapis.com/maps/api/js?key=${config.data.googleMapsApiKey}&libraries=geometry,places&loading=async&v=weekly&callback=initMaps`;
-                    script.onerror = () => {
-                        console.error('Failed to load Google Maps API');
-                        document.body.innerHTML += '<div style="position: fixed; top: 10px; right: 10px; background: #f44336; color: white; padding: 10px; border-radius: 4px;">❌ Google Maps API failed to load</div>';
-                    };
-                    document.head.appendChild(script);
-                } else {
-                    console.error('Google Maps API key not available');
-                    document.body.innerHTML += '<div style="position: fixed; top: 10px; right: 10px; background: #ff9800; color: white; padding: 10px; border-radius: 4px;">⚠️ Google Maps API key not configured</div>';
+        (function bootstrap() {
+            // Try same-origin first; API server sets CORS for browser use
+            const defaultCandidates = [
+                // Same-origin relative (works when served behind a proxy)
+                '/api/config',
+                // Common local dev ports
+                'http://localhost:5001/api/config',
+                'http://127.0.0.1:5001/api/config',
+                'http://localhost:5000/api/config',
+                'http://127.0.0.1:5000/api/config'
+            ];
+
+            async function discoverConfig(urls) {
+                for (const url of urls) {
+                    try {
+                        const resp = await fetch(url, { credentials: 'omit' });
+                        if (resp && resp.ok) {
+                            console.log('[Bootstrap] Config endpoint:', url);
+                            return await resp.json();
+                        } else {
+                            console.warn('[Bootstrap] Config not OK at', url, resp && resp.status);
+                        }
+                    } catch (e) {
+                        console.warn('[Bootstrap] Config fetch failed at', url, e && e.message);
+                    }
                 }
-            })
-            .catch(error => {
-                console.error('Failed to get configuration:', error);
-                document.body.innerHTML += '<div style="position: fixed; top: 10px; right: 10px; background: #f44336; color: white; padding: 10px; border-radius: 4px;">❌ Failed to connect to API server</div>';
-            });
+                throw new Error('All config endpoints failed');
+            }
+
+            discoverConfig(defaultCandidates)
+                .then(config => {
+                    if (!config || !config.success || !config.data) throw new Error('Bad config payload');
+                    var base = (config.data.apiBaseUrl || '').replace(/\/$/, '');
+                    if (base) {
+                        window.API_BASE = base;
+                    }
+                    // Load main app script next so it can read window.API_BASE
+                    var app = document.createElement('script');
+                    app.src = 'scripts/main.js?v=13';
+                    app.defer = true;
+                    app.onload = function() {
+                        if (window.setApiBase && window.API_BASE) {
+                            window.setApiBase(window.API_BASE);
+                        }
+                    };
+                    document.head.appendChild(app);
+
+                    // Finally load Google Maps with the key
+                    if (config.data.googleMapsApiKey) {
+                        var gms = document.createElement('script');
+                        gms.async = true;
+                        gms.defer = true;
+                        gms.src = 'https://maps.googleapis.com/maps/api/js?key=' +
+                            encodeURIComponent(config.data.googleMapsApiKey) +
+                            '&libraries=geometry,places&loading=async&v=weekly&callback=initMaps';
+                        gms.onerror = function() {
+                            console.error('Failed to load Google Maps API');
+                            document.body.insertAdjacentHTML('beforeend', '<div style="position: fixed; top: 10px; right: 10px; background: #f44336; color: white; padding: 10px; border-radius: 4px;">❌ Google Maps API failed to load</div>');
+                        };
+                        document.head.appendChild(gms);
+                    } else {
+                        console.error('Google Maps API key not available');
+                        document.body.insertAdjacentHTML('beforeend', '<div style="position: fixed; top: 10px; right: 10px; background: #ff9800; color: white; padding: 10px; border-radius: 4px;">⚠️ Google Maps API key not configured</div>');
+                    }
+                })
+                .catch(err => {
+                    console.error('Failed to get configuration:', err);
+                    document.body.insertAdjacentHTML('beforeend', '<div style="position: fixed; top: 10px; right: 10px; background: #f44336; color: white; padding: 10px; border-radius: 4px;">❌ Failed to connect to API server</div>');
+                });
+        })();
     </script>
 </body>
 </html>

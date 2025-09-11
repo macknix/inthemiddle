@@ -1,4 +1,24 @@
-const API_BASE = 'http://localhost:5001';
+// Resolve API base dynamically, with safe fallback
+let API_BASE = (typeof window !== 'undefined' && window.API_BASE)
+    ? window.API_BASE
+    : 'http://localhost:5001';
+
+function setApiBase(base) {
+    if (typeof base === 'string' && base.trim()) {
+        API_BASE = base.trim().replace(/\/$/, '');
+        if (typeof window !== 'undefined') {
+            window.API_BASE = API_BASE;
+        }
+        try {
+            console.log('API base configured:', API_BASE);
+        } catch (_) {}
+    }
+}
+
+// Expose setter for index.html/bootstrap script
+if (typeof window !== 'undefined') {
+    window.setApiBase = setApiBase;
+}
 let map;
 let directionsService;
 let directionsRenderer1, directionsRenderer2;
@@ -1093,9 +1113,10 @@ function displayResultsOnMap(data, options = {}) {
                             renderSampledPoints(fallbackSamples.map(p => ({ lat: p.lat, lng: p.lng })), map, '#d50000');
                         }
                     }
-                } catch (e) {
-                    console.warn('[Sampling] (displayResultsOnMap) Failed to render samples:', e);
                 }
+            } catch (e) {
+                console.warn('[Sampling] (displayResultsOnMap) Failed to render samples:', e);
+            }
     } else if (midpoint && typeof midpoint.lat === 'number' && typeof midpoint.lng === 'number') {
         // Fallback: show the midpoint as a marker and draw routes to it
         const midMarker = new google.maps.Marker({
