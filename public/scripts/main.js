@@ -1466,15 +1466,68 @@ document.getElementById('searchForm').addEventListener('submit', async (e) => {
         return;
     }
     
-    const loadingDiv = document.getElementById('loading');
     const resultsDiv = document.getElementById('results');
     const searchBtn = document.getElementById('searchBtn');
     
     // Show loading state
-    loadingDiv.style.display = 'block';
     resultsDiv.innerHTML = '';
     searchBtn.disabled = true;
     searchBtn.textContent = '🔍 Analyzing...';
+    // Show global overlay spinner and allow a frame to paint
+    try {
+        let overlay = document.getElementById('global-loading-overlay');
+        if (!overlay) {
+            // Create overlay dynamically if not present
+            overlay = document.createElement('div');
+            overlay.id = 'global-loading-overlay';
+            overlay.setAttribute('role', 'dialog');
+            overlay.setAttribute('aria-modal', 'true');
+            overlay.innerHTML = '<div class="loading-modal"><div class="spinner-wrap"><div class="spinner-ring"></div></div><div class="loading-text">Finding the optimal meeting point…</div></div>';
+            document.body.appendChild(overlay);
+        }
+        // Apply essential inline styles to guarantee visibility even if CSS is stale
+        overlay.style.position = 'fixed';
+        overlay.style.top = '0';
+        overlay.style.left = '0';
+        overlay.style.right = '0';
+        overlay.style.bottom = '0';
+        overlay.style.background = 'rgba(0,0,0,0.45)';
+        overlay.style.display = 'flex';
+        overlay.style.alignItems = 'center';
+        overlay.style.justifyContent = 'center';
+        overlay.style.zIndex = '100000';
+        overlay.setAttribute('aria-hidden', 'false');
+        document.body.style.overflow = 'hidden';
+        // Inline fallback styles for spinner if stylesheet not applied
+        const wrap = overlay.querySelector('.spinner-wrap');
+        if (wrap) {
+            wrap.style.width = '64px';
+            wrap.style.height = '64px';
+            wrap.style.position = 'relative';
+            wrap.style.margin = '0 auto 12px';
+        }
+        const ring = overlay.querySelector('.spinner-ring');
+        if (ring) {
+            ring.style.position = 'absolute';
+            ring.style.top = '0';
+            ring.style.left = '0';
+            ring.style.right = '0';
+            ring.style.bottom = '0';
+            ring.style.borderRadius = '50%';
+            ring.style.border = '6px solid rgba(255,255,255,0.12)';
+            ring.style.borderTopColor = '#7b9cff';
+            ring.style.animation = 'globalSpin 1.1s linear infinite';
+        }
+        // Inject keyframes if needed
+        if (!document.getElementById('global-loading-keyframes')) {
+            const style = document.createElement('style');
+            style.id = 'global-loading-keyframes';
+            style.textContent = '@keyframes globalSpin { to { transform: rotate(360deg); } }';
+            document.head.appendChild(style);
+        }
+        // Let browser paint before heavy work
+        await new Promise(r => requestAnimationFrame(() => r()));
+    } catch (_) {}
     
     // Clear previous results
     clearMarkers();
@@ -1681,9 +1734,16 @@ document.getElementById('searchForm').addEventListener('submit', async (e) => {
         `;
     } finally {
         console.log('Resetting UI state');
-        loadingDiv.style.display = 'none';
         searchBtn.disabled = false;
         searchBtn.textContent = '🚇 Find Meeting Point';
+        try {
+            const overlay = document.getElementById('global-loading-overlay');
+            if (overlay) {
+                overlay.style.display = 'none';
+                overlay.setAttribute('aria-hidden', 'true');
+                document.body.style.overflow = '';
+            }
+        } catch (_) {}
         console.log('=== FRONTEND: Request completed ===');
     }
 });

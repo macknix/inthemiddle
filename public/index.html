@@ -68,11 +68,7 @@
                     No businesses displayed
                 </div>
             </div>
-            
-            <div id="loading" class="loading" style="display: none;">
-                🔍 Finding optimal meeting point and calculating routes...
-            </div>
-            
+
             <div id="results"></div>
         </div>
         
@@ -80,6 +76,16 @@
             <div class="maps-container single-map" id="mapsContainer">
                 <div id="map"></div>
             </div>
+        </div>
+    </div>
+
+    <!-- Global loading overlay -->
+    <div id="global-loading-overlay" style="display:none;" role="dialog" aria-modal="true" aria-hidden="true">
+        <div class="loading-modal">
+            <div class="spinner-wrap">
+                <div class="spinner-ring"></div>
+            </div>
+            <div class="loading-text">Finding the optimal meeting point…</div>
         </div>
     </div>
 
