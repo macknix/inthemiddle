@@ -1311,6 +1311,179 @@ function updateBusinessCount() {
     }
 }
 
+// Simple HTML-escape for string injection
+function safeText(s) {
+    try {
+        return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    } catch (_) {
+        return '';
+    }
+}
+
+// Build HTML for a route's steps using existing formatting
+function buildInstructionsHtml(route, title, color) {
+    if (!route) return `<div style="padding:12px; color:#b00020;">No route available.</div>`;
+    let html = `
+        <div style="padding:12px;">
+            <h4 style="margin:0 0 10px; color:${color};">${title}</h4>
+    `;
+    try {
+        const legs = route.legs || [];
+        legs.forEach((leg, legIndex) => {
+            if (legs.length > 1) {
+                html += `<div style="margin:8px 0; font-weight:600; color:${color}">Leg ${legIndex+1}</div>`;
+            }
+            (leg.steps || []).forEach(step => {
+                const enhanced = formatEnhancedInstruction(step);
+                const distance = step.distance && step.distance.text || '';
+                const duration = step.duration && step.duration.text || '';
+                const bg = enhanced.isTransit ? '#f0f7ff' : '#f8f9fa';
+                const border = enhanced.isTransit ? color : '#e1e3e1';
+                html += `
+                    <div style="margin-bottom:10px; padding:10px; border-left:4px solid ${border}; background:${bg}; border-radius:0 6px 6px 0;">
+                        <div style="font-size:13px; font-weight:500; color:#202124;">${enhanced.instruction}</div>
+                        ${enhanced.stopDetails ? `<div style=\"font-size:12px; color:#1a73e8;\">📍 ${enhanced.stopDetails}</div>` : ''}
+                        ${enhanced.timeDetails ? `<div style=\"font-size:12px; color:#34a853;\">⏰ ${enhanced.timeDetails}</div>` : ''}
+                        <div style="font-size:12px; color:#5f6368;">📏 ${distance} • ⏱️ ${duration}</div>
+                    </div>
+                `;
+            });
+        });
+    } catch (e) {
+        html += `<div style="color:#b00020;">Failed to build instructions.</div>`;
+    }
+    html += `</div>`;
+    return html;
+}
+
+// Show a side-by-side panel of A/B routes for a given algorithm set
+function showSideBySideInstructions(kind) {
+    // Determine which renderers to use
+    const isDefault = (kind === 'default');
+    const renA = isDefault ? directionsRenderer1 : directionsRendererAlt1;
+    const renB = isDefault ? directionsRenderer2 : directionsRendererAlt2;
+    const dirA = renA && renA.getDirections && renA.getDirections();
+    const dirB = renB && renB.getDirections && renB.getDirections();
+    const routeA = dirA && dirA.routes && dirA.routes[0];
+    const routeB = dirB && dirB.routes && dirB.routes[0];
+
+    // Close any existing modal first
+    const oldOverlay = document.getElementById('route-side-by-side-overlay');
+    if (oldOverlay) oldOverlay.remove();
+
+    // Create backdrop overlay
+    const overlay = document.createElement('div');
+    overlay.id = 'route-side-by-side-overlay';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.style.position = 'fixed';
+    overlay.style.inset = '0';
+    overlay.style.background = 'rgba(0,0,0,0.4)';
+    overlay.style.display = 'flex';
+    overlay.style.alignItems = 'center';
+    overlay.style.justifyContent = 'center';
+    overlay.style.zIndex = '99999';
+
+    // Prevent background scroll
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    // Modal container
+    const modal = document.createElement('div');
+    modal.style.background = 'white';
+    modal.style.borderRadius = '10px';
+    modal.style.boxShadow = '0 10px 30px rgba(0,0,0,0.2)';
+    modal.style.width = 'min(1000px, 92vw)';
+    modal.style.maxHeight = '86vh';
+    modal.style.display = 'flex';
+    modal.style.flexDirection = 'column';
+    modal.style.overflow = 'hidden';
+
+    const header = document.createElement('div');
+    header.style.display = 'flex';
+    header.style.justifyContent = 'space-between';
+    header.style.alignItems = 'center';
+    header.style.padding = '12px 16px';
+    header.style.background = '#f8f9fa';
+    header.style.borderBottom = '1px solid #e1e3e1';
+    header.innerHTML = `
+        <div style="font-weight:600; font-size:16px;">🧭 ${isDefault ? 'Default' : 'Route Midpoint'} — Side-by-side routes</div>
+        <button id="close-side-by-side" style="border:1px solid #dadce0; background:white; border-radius:6px; padding:6px 10px; cursor:pointer;">Close</button>
+    `;
+
+    const content = document.createElement('div');
+    content.style.display = 'grid';
+    content.style.gridTemplateColumns = '1fr 1fr';
+    content.style.gap = '0';
+    content.style.overflow = 'auto';
+    content.style.padding = '8px';
+
+    const left = document.createElement('div');
+    left.style.borderRight = '1px solid #e1e3e1';
+    left.style.paddingRight = '8px';
+    const startATitle = routeA && routeA.legs && routeA.legs[0] && routeA.legs[0].start_address
+        ? safeText(routeA.legs[0].start_address)
+        : 'From A';
+    left.innerHTML = buildInstructionsHtml(routeA, startATitle, isDefault ? '#4285f4' : '#9c27b0');
+
+    const right = document.createElement('div');
+    right.style.paddingLeft = '8px';
+    const startBTitle = routeB && routeB.legs && routeB.legs[0] && routeB.legs[0].start_address
+        ? safeText(routeB.legs[0].start_address)
+        : 'From B';
+    right.innerHTML = buildInstructionsHtml(routeB, startBTitle, isDefault ? '#ea4335' : '#0f9d58');
+
+    content.appendChild(left);
+    content.appendChild(right);
+
+    modal.appendChild(header);
+    modal.appendChild(content);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    const close = () => {
+        overlay.remove();
+        document.body.style.overflow = prevOverflow || '';
+        if (lastActive) {
+            try { lastActive.focus(); } catch (_) {}
+        }
+        window.removeEventListener('keydown', onKeydown);
+    };
+
+    // Close handlers
+    const closeBtn = document.getElementById('close-side-by-side');
+    closeBtn.addEventListener('click', close);
+    overlay.addEventListener('click', (e) => {
+        // Only close on backdrop click (not inner modal clicks)
+        if (e.target === overlay) close();
+    });
+
+    const onKeydown = (e) => { if (e.key === 'Escape') close(); };
+    window.addEventListener('keydown', onKeydown);
+
+    // Focus management
+    const lastActive = document.activeElement;
+    setTimeout(() => { try { closeBtn.focus(); } catch (_) {} }, 0);
+}
+
+function attachRouteCardClickHandlers(resultsDiv) {
+    try {
+        const items = resultsDiv.querySelectorAll('.result-item[data-card-kind]');
+        items.forEach(el => {
+            const kind = el.getAttribute('data-card-kind');
+            el.addEventListener('click', () => showSideBySideInstructions(kind));
+            el.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    showSideBySideInstructions(kind);
+                }
+            });
+        });
+    } catch (e) {
+        console.warn('Failed to attach card handlers', e);
+    }
+}
+
 // Apply filters function called by the Apply Filters button
 function applyFilters() {
     if (categorizedBusinesses) {
@@ -1490,10 +1663,10 @@ document.getElementById('searchForm').addEventListener('submit', async (e) => {
 
         // Update results panel summary for both
         const summaries = [];
-        if (okDefault && resDefault.data.optimal_meeting_point) {
+    if (okDefault && resDefault.data.optimal_meeting_point) {
             const mp = resDefault.data.optimal_meeting_point;
             summaries.push(`
-                <div class="result-item">
+        <div class="result-item" data-card-kind="default" role="button" tabindex="0" style="cursor:pointer;">
                     <h4>🎯 Optimal (Default)</h4>
                     <strong>${mp.name}</strong><br>
                     📍 ${mp.formatted_address}<br>
@@ -1503,10 +1676,10 @@ document.getElementById('searchForm').addEventListener('submit', async (e) => {
                 </div>
             `);
         }
-        if (okRoute && resRoute.data.optimal_meeting_point) {
+    if (okRoute && resRoute.data.optimal_meeting_point) {
             const mp2 = resRoute.data.optimal_meeting_point;
             summaries.push(`
-                <div class="result-item">
+        <div class="result-item" data-card-kind="route" role="button" tabindex="0" style="cursor:pointer;">
                     <h4>🎯 Optimal (Route Midpoint)</h4>
                     <strong>${mp2.name}</strong><br>
                     📍 ${mp2.formatted_address}<br>
@@ -1532,6 +1705,7 @@ document.getElementById('searchForm').addEventListener('submit', async (e) => {
         }
         if (summaries.length > 0) {
             resultsDiv.innerHTML = summaries.join('');
+            attachRouteCardClickHandlers(resultsDiv);
         } else {
             resultsDiv.innerHTML = `
                 <div class="error">
