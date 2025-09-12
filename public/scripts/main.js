@@ -859,8 +859,7 @@ function displayResultsOnMap(data, options = {}) {
     colors = { A: '#4285f4', B: '#ea4335' },
         labelSuffix = 'Default',
         showBusinesses = true,
-    optimalColor = '#34a853',
-    betweenColor = null
+    optimalColor = '#34a853'
     } = options;
     
     // Validate data structure
@@ -970,48 +969,7 @@ function displayResultsOnMap(data, options = {}) {
         // Display routes from both addresses to the optimal meeting point
         displayRoutesWithRenderers(address1, address2, optimal, renderers.A, renderers.B, colors.A, colors.B, labelSuffix);
 
-        // If backend provided an overview polyline for the route between A and B (route-midpoint algo), draw it
-    if (data.route && data.route.overview_polyline && typeof google.maps.geometry !== 'undefined' && google.maps.geometry.encoding) {
-            try {
-                const path = google.maps.geometry.encoding.decodePath(data.route.overview_polyline);
-                const poly = new google.maps.Polyline({
-                    path,
-                    geodesic: true,
-                    strokeColor: betweenColor || '#7b1fa2',
-                    strokeOpacity: 0.9,
-                    strokeWeight: 4,
-                    clickable: true,
-                    zIndex: 998
-                });
-                poly.setMap(map);
-
-                // Build info content
-                const distance = data.route.distance_meters ? `${(data.route.distance_meters/1000).toFixed(1)} km` : 'N/A';
-                const duration = data.route.duration_seconds ? `${Math.round(data.route.duration_seconds/60)} min` : 'N/A';
-                const infoWindow = new google.maps.InfoWindow({
-                    content: `
-                        <div style="padding:8px; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
-                            <div style="font-weight:600; margin-bottom:6px; color:${betweenColor || '#7b1fa2'};">🚇 Fastest Transit Route ${labelSuffix ? '('+labelSuffix+')' : ''}</div>
-                            <div>⏱️ Duration: ${duration}</div>
-                            <div>📏 Distance: ${distance}</div>
-                        </div>
-                    `
-                });
-
-                const listener = poly.addListener('click', (e) => {
-                    routeClickedRecently = true;
-                    setTimeout(() => { routeClickedRecently = false; }, 200);
-                    closeAllInfoWindows();
-                    infoWindow.setPosition(e.latLng);
-                    infoWindow.open(map);
-                    openInfoWindows.push(infoWindow);
-                });
-
-                routes.push({ polyline: poly, infoWindow, listener });
-            } catch (err) {
-                console.error('Failed to decode/plot overview polyline:', err);
-            }
-        }
+    // Previously: drew a separate A↔B fastest route polyline. Removed per request.
         
         // Add info window for optimal point
         const meetingPointInfoWindow = new google.maps.InfoWindow({
@@ -1596,7 +1554,6 @@ document.getElementById('searchForm').addEventListener('submit', async (e) => {
                     labelSuffix: 'Route Midpoint',
                     showBusinesses: false,
                     optimalColor: '#fbbc05',
-                    betweenColor: '#7b1fa2',
                     showSamples: (typeof window.SHOW_ROUTE_SAMPLES === 'undefined' ? true : !!window.SHOW_ROUTE_SAMPLES)
                 });
                 // Render sampled points from route algorithm (honor global config)
