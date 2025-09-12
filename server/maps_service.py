@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 PLACE_FAIRNESS_WEIGHT = 0.7
 PLACE_EFFICIENCY_WEIGHT = 0.3
 DISTANCE_MATRIX_MAX_DEST = 25   # conservative chunk size for DM requests
+MAX_WORKERS = 20  # Default max worker threads for concurrent requests
 
 
 class GoogleMapsService:
@@ -25,7 +26,7 @@ class GoogleMapsService:
             raise ValueError("Valid Google Maps API key is required")
         self.client = googlemaps.Client(key=api_key)
         # Allow tuning max worker threads via env (default 10)
-        max_workers = 10
+        max_workers = MAX_WORKERS
         try:
             mw = int(os.getenv('GMAPS_MAX_WORKERS', '10'))
             if mw >= 1:
@@ -999,6 +1000,7 @@ class MiddlePointFinderTwo:
             eval_map[key] = ev
 
         # Determine best per fraction (with only centerline, this is straightforward)
+        t_per_fraction = perf_counter()
         per_fraction_best: Dict[float, Dict] = {}
         for ev in global_evals:
             f = ev['point']['route_fraction']
@@ -1007,15 +1009,45 @@ class MiddlePointFinderTwo:
                 per_fraction_best[f] = ev
         ranked_fracs = sorted(per_fraction_best.values(), key=lambda e: e['max_travel_time_seconds'])
         top_fracs = [e['point']['route_fraction'] for e in ranked_fracs[:top_k_refine]]
+        try:
+            logger.info(
+                "Time to select best-per-fraction (Route-based) = %.1f ms; unique_fracs=%s; top_k=%s",
+                (perf_counter() - t_per_fraction) * 1000.0,
+                len(per_fraction_best),
+                len(top_fracs)
+            )
+        except Exception:
+            pass
 
         # --- Local Bayesian refinement for each top fraction ---
+        t_local_section = perf_counter()
         refined_evals: List[Dict] = []
         try:
             import numpy as _np
         except Exception:
+            try:
+                logger.info(
+                    "Local refinement setup/fallback (NumPy unavailable) took = %.1f ms; centers=%s",
+                    (perf_counter() - t_local_section) * 1000.0,
+                    len(top_fracs)
+                )
+            except Exception:
+                pass
             top_best = ranked_fracs[0] if ranked_fracs else (global_evals[0] if global_evals else None)
             all_payload = self._format_samples_payload(global_evals + refined_evals)
             return (self._to_metrics_dict(top_best) if top_best else None), all_payload
+
+        # --- Concurrency controls for local refinements ---
+        try:
+            concurrent_refines = max(1, int(os.getenv("LOCAL_REFINE_CONCURRENCY", "2")))
+        except Exception:
+            concurrent_refines = 2
+        refine_semaphore = asyncio.Semaphore(min(concurrent_refines, max(1, len(top_fracs))))
+        refine_lock = asyncio.Lock()  # protect shared eval_map/refined_evals updates
+        try:
+            logger.info("Local refinement concurrency = %s", concurrent_refines)
+        except Exception:
+            pass
 
         def rbf_kernel(a: _np.ndarray, b: _np.ndarray, ls: float = 0.05):
             d = _np.subtract.outer(a, b)**2
@@ -1034,7 +1066,8 @@ class MiddlePointFinderTwo:
                 new_ev = await self._evaluate_minimax_candidates(loc1, loc2, [base])
                 if new_ev:
                     ev = new_ev[0]
-                    eval_map[(round(center_frac,6), 0.0)] = ev
+                    async with refine_lock:
+                        eval_map[(round(center_frac,6), 0.0)] = ev
                     existing = [((round(center_frac,6),0.0), ev)]
             # Prepare GP data
             X = _np.array([k[0] for k,_ in existing])
@@ -1107,11 +1140,13 @@ class MiddlePointFinderTwo:
                 added_centers = 0
                 for ev in cand_evals:
                     key = (round(ev['point']['route_fraction'],6), float(ev['point']['lateral_offset_m']))
-                    if key not in eval_map:
-                        eval_map[key] = ev
-                        refined_evals.append(ev)
+                    async with refine_lock:
+                        if key not in eval_map:
+                            eval_map[key] = ev
+                            refined_evals.append(ev)
                 for f in chosen:
-                    center_ev = eval_map.get((round(f,6), 0.0))
+                    async with refine_lock:
+                        center_ev = eval_map.get((round(f,6), 0.0))
                     if center_ev is not None:
                         X = _np.append(X, center_ev['point']['route_fraction'])
                         y = _np.append(y, center_ev['max_travel_time_seconds'])
@@ -1126,15 +1161,22 @@ class MiddlePointFinderTwo:
                     pass
             return
 
-        # Run refinements sequentially (could be parallel but sequence for rate limiting)
+        # Run refinements with bounded concurrency (defaults to 2; override via LOCAL_REFINE_CONCURRENCY)
         t_local_refine = perf_counter()
-        for f in top_fracs:
-            await refine_fraction(f)
+        async def _bound_refine(frac: float):
+            async with refine_semaphore:
+                await refine_fraction(frac)
+        await asyncio.gather(*[_bound_refine(f) for f in top_fracs])
         try:
             logger.info(
                 "Time to locally refine around top fractions (Route-based) = %.1f ms; centers=%s",
                 (perf_counter() - t_local_refine) * 1000.0,
                 len(top_fracs)
+            )
+            logger.info(
+                "Local refinement section total (setup + refinements) = %.1f ms; refined_evals=%s",
+                (perf_counter() - t_local_section) * 1000.0,
+                len(refined_evals)
             )
         except Exception:
             pass
