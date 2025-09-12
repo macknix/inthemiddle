@@ -199,7 +199,7 @@ function initMaps() {
             zIndex: 999
         },
         suppressMarkers: true,
-        preserveViewport: false
+        preserveViewport: true
     });
     directionsRendererAlt2 = new google.maps.DirectionsRenderer({
         map: map,
@@ -211,7 +211,7 @@ function initMaps() {
             zIndex: 999
         },
         suppressMarkers: true,
-        preserveViewport: false
+        preserveViewport: true
     });
     
     checkApiStatus();
@@ -898,14 +898,24 @@ function displayResultsOnMap(data, options = {}) {
         return;
     }
     
-    // Center map near a sensible point: midpoint if available, else optimal, else average of inputs
+    // Center map:
+    // - If this is the Route Midpoint overlay and route_midpoint exists, center there.
+    // - Else prefer optimal; if none, center on Address 1, else average of inputs; midpoint as last resort.
+    const isRouteOverlay = (labelSuffix && /route/i.test(labelSuffix));
+    const routeMidpoint = (data && data.route_midpoint && typeof data.route_midpoint.lat === 'number' && typeof data.route_midpoint.lng === 'number')
+        ? { lat: data.route_midpoint.lat, lng: data.route_midpoint.lng }
+        : null;
     let center;
-    if (midpoint && typeof midpoint.lat === 'number' && typeof midpoint.lng === 'number') {
-        center = { lat: midpoint.lat, lng: midpoint.lng };
+    if (isRouteOverlay && routeMidpoint) {
+        center = routeMidpoint;
     } else if (optimal && typeof optimal.lat === 'number' && typeof optimal.lng === 'number') {
         center = { lat: optimal.lat, lng: optimal.lng };
+    } else if (address1 && typeof address1.lat === 'number' && typeof address1.lng === 'number') {
+        center = { lat: address1.lat, lng: address1.lng };
     } else if (address1 && address2) {
         center = { lat: (address1.lat + address2.lat) / 2, lng: (address1.lng + address2.lng) / 2 };
+    } else if (midpoint && typeof midpoint.lat === 'number' && typeof midpoint.lng === 'number') {
+        center = { lat: midpoint.lat, lng: midpoint.lng };
     } else {
         center = map.getCenter();
     }
@@ -1027,24 +1037,15 @@ function displayResultsOnMap(data, options = {}) {
                 console.warn('[Sampling] (displayResultsOnMap) Failed to render samples:', e);
             }
     } else if (midpoint && typeof midpoint.lat === 'number' && typeof midpoint.lng === 'number') {
-        // Fallback: show the midpoint as a marker and draw routes to it
-        const midMarker = new google.maps.Marker({
-            position: { lat: midpoint.lat, lng: midpoint.lng },
-            map: map,
-            title: `Midpoint ${labelSuffix ? '('+labelSuffix+')' : ''}`,
-            icon: {
-                url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
-                    <svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 50 50">
-                        <circle cx="25" cy="25" r="22" fill="${optimalColor}" stroke="white" stroke-width="4"/>
-                        <text x="25" y="31" text-anchor="middle" fill="white" font-family="Arial" font-size="16" font-weight="bold">M</text>
-                    </svg>
-                `),
-                scaledSize: new google.maps.Size(44, 44)
+        // Requested behavior: skip midpoint fallback routing; center on Address 1 instead
+        console.log('[Fallback] No optimal meeting point; centering on Address 1 and skipping midpoint routing.');
+        try {
+            if (address1 && typeof address1.lat === 'number' && typeof address1.lng === 'number') {
+                map.setCenter({ lat: address1.lat, lng: address1.lng });
             }
-        });
-        markers.push(midMarker);
-
-        displayRoutesWithRenderers(address1, address2, midpoint, renderers.A, renderers.B, colors.A, colors.B, labelSuffix);
+        } catch (e) {
+            console.warn('Failed to re-center on Address 1:', e);
+        }
     }
     
     // Display businesses within walking circles (only for primary/default to avoid clutter)
@@ -1667,6 +1668,18 @@ document.getElementById('searchForm').addEventListener('submit', async (e) => {
                     }
                 } else if (!allowSamples) {
                     console.log('[Sampling] Skipped overlay sampling by config');
+                }
+                // Finally, center on the route midpoint if present (may override DirectionsRenderer/fitBounds changes)
+                try {
+                    const rm = resRoute && resRoute.data && resRoute.data.route_midpoint;
+                    if (rm && typeof rm.lat === 'number' && typeof rm.lng === 'number') {
+                        const target = { lat: rm.lat, lng: rm.lng };
+                        // use a couple of delays to win against late viewport changes
+                        setTimeout(() => { try { map.setCenter(target); } catch (_) {} }, 300);
+                        setTimeout(() => { try { map.setCenter(target); } catch (_) {} }, 1200);
+                    }
+                } catch (e) {
+                    console.warn('Failed to center on route_midpoint:', e);
                 }
             }, 100);
         }
