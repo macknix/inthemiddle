@@ -1,6 +1,6 @@
 # Meet in the Middle
 
-A Flask web application that finds the optimal meeting point between two addresses based on public transport travel time, with business discovery and filtering capabilities.
+Find a fair, transit-friendly place to meet between two addresses. The app offers two algorithms (default geographic midpoint and a route-based strict minimax) and shows nearby places via Google Places.
 
 ## 🏗️ Project Structure
 
@@ -15,14 +15,14 @@ meet-in-the-middle/
 │   └── *.html            # Other HTML pages (test, debug, etc.)
 ├── server/                # Backend Python code
 │   ├── __init__.py       # Server package initialization
-│   ├── app.py            # Main Flask application
-│   ├── maps_service.py   # Google Maps API integration
+│   ├── app.py            # Flask API (endpoints and wiring)
+│   ├── maps_service.py   # Google Maps integration + algorithms
 │   ├── serve_map.py      # Static file server
 │   └── tests/
 │       ├── test_api.py   # API unit tests
 │       └── demo.py       # Demo/example scripts
 ├── env/                  # Python virtual environment
-├── main.py              # Alternative entry point
+├── main.py              # Alternative entry point (runs API on 5000)
 ├── run_dev.py           # Development server script
 ├── requirements.txt     # Python dependencies
 ├── .env                 # Environment variables (API keys)
@@ -31,18 +31,18 @@ meet-in-the-middle/
 
 ## 🚀 Features
 
-- **🎯 Optimal Meeting Point**: Finds the best location based on equal transit times
-- **🚇 Public Transport**: Uses real-time Google Maps transit directions
-- **🗺️ Interactive Maps**: Visual representation with custom markers and info windows
-- **⭕ Walking Distance Rings**: Shows 5, 10, and 15-minute walking areas
-- **🏢 Business Discovery**: Displays nearby restaurants, cafes, parks, and more
-- **🔍 Smart Filtering**: Filter businesses by category with real-time updates
-- **📱 Responsive Design**: Works on desktop and mobile devices
+- Two algorithms:
+   - Default: geographic midpoint seed with fairness/efficiency composite scoring across nearby Places
+   - Route-based: strict minimax objective (minimize the maximum of the two transit times) sampled along the fastest public-transit route
+- Transit-only directions and scoring (no driving fallback)
+- Resilient frontend bootstrap: loads `main.js` first, discovers `/api/config`, then injects Google Maps script
+- Clear UX on failures: if no transit route is found, shows a concise error (no map overlays); also shows a "no meeting point found" message if calls succeed but no candidates qualify
+- Nearby Places discovery and lightweight categorization
 
 ## 🛠️ Setup and Installation
 
 ### Prerequisites
-- Python 3.8+
+- Python 3.10+
 - Google Maps API key with the following APIs enabled:
   - Maps JavaScript API
   - Geocoding API
@@ -85,8 +85,8 @@ python run_dev.py
 ```
 
 This will start:
-- **API Server**: http://localhost:5000
-- **Web Interface**: http://localhost:8080
+- **API Server**: http://localhost:5001
+- **Web Interface**: http://localhost:8082
 
 ### Manual Start (Individual Servers)
 
@@ -111,11 +111,12 @@ source env/bin/activate
 python -m server.tests.test_api
 ```
 
-**Run demo script:**
+**Run backend demo (route-based + default) in `maps_service.py`:**
 ```bash
 source env/bin/activate
-python -m server.tests.demo
+python server/maps_service.py
 ```
+The demo runs sample addresses and prints JSON summaries. Requires a valid `GOOGLE_MAPS_API_KEY`.
 
 ## 📖 Usage
 
@@ -141,18 +142,20 @@ python -m server.tests.demo
 
 ## 🔧 API Endpoints
 
-- `GET /` - Health check and available endpoints
-- `POST /api/find-middle-point` - Find optimal meeting point
-- `POST /api/geocode` - Geocode an address
-- `POST /api/transit-time` - Get transit time between points
+- `GET /` — Health check and available endpoints
+- `GET /api/config` — Frontend config: base URL and whether a Maps key is configured
+- `POST /api/find-middle-point` — Find optimal meeting point (supports per-request `{ "algorithm": "default" | "route-midpoint" }`)
+- `POST /api/geocode` — Geocode an address
+- `POST /api/transit-time` — Transit time between two coordinates
 
 ## 🎨 Architecture
 
 ### Backend (Flask)
-- **Separation of Concerns**: Clean separation between API logic and map services
-- **Modular Design**: Google Maps integration in dedicated service class
-- **Error Handling**: Comprehensive error handling and validation
-- **Testing**: Unit tests for API endpoints
+- Google Maps client with batching for Distance Matrix, light in-process caching, and thread-pooled async wrappers
+- Two algorithms:
+   - `MiddlePointFinder` (default): geocode → geographic midpoint → Places search → composite scoring (fairness + efficiency)
+   - `MiddlePointFinderTwo` (route-based): fastest transit route → global sampling (plus lateral offsets) → batched Distance Matrix → strict minimax → local refinements
+- Detailed timing logs and per-request process-time headers
 
 ### Frontend (Vanilla JavaScript)
 - **Modern ES6+**: Uses modern JavaScript features
@@ -162,17 +165,29 @@ python -m server.tests.demo
 
 ## 🌍 Environment Variables
 
-Create a `.env` file with:
+Create a `.env` file with at least:
 ```
 GOOGLE_MAPS_API_KEY=your_google_maps_api_key_here
 ```
 
+Optional tuning knobs:
+```
+# Select default algorithm used by the API when not overridden per request
+MIDDLEPOINT_ALGORITHM=default   # or route-midpoint
+
+# Google Distance Matrix batching
+DM_MAX_DEST=25                  # max destinations per DM chunk
+DM_PARALLEL_CHUNKS=3            # max concurrent DM chunk requests
+
+# Thread pool size for GoogleMapsService async wrappers
+GMAPS_MAX_WORKERS=10
+```
+
 ## 📝 Notes
 
-- The application uses walking distance estimates (80m/minute average)
-- Transit times are calculated using Google Maps real-time data
-- Business search radius is set to 2km around the optimal meeting point
-- The interface automatically updates when filters are changed
+- Transit-only: if Google returns no transit routes, the UI shows an error message and no overlays.
+- If Places are found but none have valid transit times, the UI shows a "no meeting point found" message.
+- Route sampling points may be included in the API response for visualization/testing when using the route-based algorithm.
 
 ## 🤝 Contributing
 

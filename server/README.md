@@ -1,15 +1,15 @@
 # Backend - Server Directory
 
-This directory contains all backend Python code for the "Meet in the Middle" Flask application.
+Backend Python code for the "Meet in the Middle" Flask application. Provides REST endpoints and Google Maps integrations plus two algorithms for choosing a fair meeting point.
 
 ## 📁 Structure
 
 ```
 server/
 ├── 🐍 __init__.py          # Package initialization
-├── 🌐 app.py               # Main Flask application (API server)
-├── 🗺️ maps_service.py      # Google Maps API integration
-├── 📁 serve_map.py         # Static file server
+├── 🌐 app.py               # Flask API server (endpoints, config, timing)
+├── 🗺️ maps_service.py      # Google Maps integration + algorithms
+├── 📁 serve_map.py         # Static file server (serves ../public)
 └── 🧪 tests/
     ├── test_api.py         # API endpoint unit tests
     └── demo.py             # Demo scripts and examples
@@ -18,41 +18,49 @@ server/
 ## 🚀 Main Components
 
 ### `app.py` - Flask API Server
-- **Purpose**: Main Flask application providing REST API
-- **Port**: 5001
-- **Endpoints**: Health check, geocoding, meeting point finding
-- **Features**: CORS enabled, error handling, environment configuration
+- **Purpose**: REST API endpoints and request lifecycle logging
+- **Port**: 5000 (when run directly); 5001 when started by `run_dev.py`
+- **Endpoints**: Health check, geocoding, config, meeting point finding
+- **Features**: CORS enabled, error handling, environment/algorithm configuration
 
 **Key Routes:**
 ```python
 GET  /                     # Health check
 POST /api/geocode          # Address geocoding
-POST /api/find-middle-point # Find optimal meeting point
+GET  /api/config           # Frontend config (API base, Maps API key presence)
+POST /api/find-middle-point # Find optimal meeting point (supports algorithm override)
 ```
 
-### `maps_service.py` - Google Maps Integration
-- **Purpose**: Wrapper for Google Maps APIs
-- **Classes**: `GoogleMapsService`, `MiddlePointFinder`
-- **Features**: Geocoding, directions, places search, transit times
+### `maps_service.py` - Google Maps + Algorithms
+- **Purpose**: Wrapper for Google Maps APIs and core algorithms
+- **Classes**: `GoogleMapsService`, `MiddlePointFinder` (geographic), `MiddlePointFinderTwo` (route-based minimax)
+- **Features**: Geocoding, Distance Matrix batching, Places search, polyline decoding, route sampling (global + local refinement), strict minimax objective
 
 **Key Classes:**
 ```python
 class GoogleMapsService:
-    # Direct Google Maps API integration
-    def geocode_address()
-    def get_directions()
-    def search_nearby_places()
+  # Geocoding, Directions (transit), Distance Matrix batching, Places
+  geocode_address()
+  get_transit_time()
+  get_fastest_transit_route()  # overview polyline, distance, duration, decoded points
+  find_places_nearby()
+  get_transit_times_matrix()
+  decode_polyline()
 
 class MiddlePointFinder:
-    # Business logic for finding meeting points
-    def find_optimal_meeting_point()
-    def calculate_transit_times()
+  # Default algorithm: geographic midpoint + Places composite score
+  find_optimal_meeting_point()
+
+class MiddlePointFinderTwo:
+  # Route-based minimax: minimize max travel time along fastest transit route
+  # Uniform global sampling (with optional lateral offsets) + local refinements
+  find_optimal_meeting_point()
 ```
 
 ### `serve_map.py` - Static File Server
 - **Purpose**: Serves frontend files from `public/` directory
 - **Port**: 8082
-- **Features**: CORS headers, auto-browser opening, clean logging
+- **Features**: CORS headers, auto-open browser, clean logging
 
 ### `tests/` - Testing Suite
 
@@ -79,6 +87,7 @@ GET /
   "endpoints": {
     "find_middle_point": "/api/find-middle-point",
     "geocode": "/api/geocode",
+  "config": "/api/config",
     "health": "/"
   },
   "status": "healthy"
@@ -92,6 +101,21 @@ Content-Type: application/json
 
 {
   "address": "Times Square, New York, NY"
+}
+```
+
+### Config Endpoint
+```http
+GET /api/config
+```
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "googleMapsApiKey": "<masked or null>",
+    "apiBaseUrl": "http://localhost:5000"
+  }
 }
 ```
 **Response:**
@@ -114,26 +138,55 @@ Content-Type: application/json
 {
   "address1": "Brooklyn Bridge, NY",
   "address2": "Central Park, NY",
-  "transport_mode": "transit",
-  "search_nearby_businesses": true,
-  "business_types": ["restaurant", "cafe"]
+  "search_radius": 2000,
+  "algorithm": "default" | "route-midpoint"  // optional; overrides env default
 }
 ```
-**Response:**
+Per-request `algorithm` overrides the `MIDDLEPOINT_ALGORITHM` env default.
+
+**Response (default algorithm):**
 ```json
 {
   "success": true,
   "data": {
-    "middle_point": {
-      "lat": 40.7589,
-      "lng": -73.9851,
-      "address": "Lower Manhattan, NY"
+    "address1": { "input": "...", "geocoded": {"lat": 0, "lng": 0} },
+    "address2": { "input": "...", "geocoded": {"lat": 0, "lng": 0} },
+    "geographic_midpoint": { "lat": 0, "lng": 0 },
+    "geographic_midpoint_transit_times": {
+      "from_address1_seconds": 900,
+      "from_address2_seconds": 960
     },
-    "route_info": {
-      "address1_to_middle": { "duration": "15 mins", "distance": "2.1 km" },
-      "address2_to_middle": { "duration": "16 mins", "distance": "2.3 km" }
+    "optimal_meeting_point": { /* best place with fairness/efficiency scores */ },
+    "nearby_alternatives": [...],
+    "categorized_businesses": { "restaurant": [...], "cafe": [...], ... }
+  }
+}
+```
+
+**Response (route-midpoint algorithm):**
+```json
+{
+  "success": true,
+  "data": {
+    "algorithm": "route-midpoint",
+    "address1": { "input": "...", "geocoded": {"lat": 0, "lng": 0} },
+    "address2": { "input": "...", "geocoded": {"lat": 0, "lng": 0} },
+    "route": {
+      "overview_polyline": "{encoded}",
+      "distance_meters": 12345,
+      "duration_seconds": 1800
     },
-    "nearby_businesses": [...]
+    "meeting_point": { "lat": 0, "lng": 0 },
+    "minimax_metrics": {
+      "from_address1_seconds": 900,
+      "from_address2_seconds": 900,
+      "max_travel_time_seconds": 900,
+      "time_difference_seconds": 0
+    },
+    "optimal_meeting_point": { /* best place with scores */ },
+    "nearby_alternatives": [...],
+    "categorized_businesses": { ... },
+    "route_sampling_points": [ /* optional, for visualization */ ]
   }
 }
 ```
@@ -143,6 +196,11 @@ Content-Type: application/json
 ### Required Environment Variables
 ```bash
 GOOGLE_MAPS_API_KEY=your_google_maps_api_key_here
+MIDDLEPOINT_ALGORITHM=default        # or route-midpoint (optional)
+# Optional performance tuning
+DM_MAX_DEST=25
+DM_PARALLEL_CHUNKS=3
+GMAPS_MAX_WORKERS=10
 ```
 
 ### Google Maps APIs Required
@@ -163,13 +221,21 @@ python -m server.app
 python -m server.serve_map
 ```
 
-### Testing
+### Algorithm Selection
+- Default: `MiddlePointFinder` (geographic midpoint + composite scoring)
+- Alternate: `MiddlePointFinderTwo` (route-based strict minimax)
+
+You can select the algorithm in two ways:
+- Environment default: set `MIDDLEPOINT_ALGORITHM=default` or `route-midpoint`
+- Per-request override: include `{ "algorithm": "default" | "route-midpoint" }` in `/api/find-middle-point` body
+
+### Testing & Demo
 ```bash
 # Run unit tests
 python -m server.tests.test_api
 
-# Run demo scripts
-python -m server.tests.demo
+# Run in-file demo (requires API key)
+python server/maps_service.py
 
 # Test setup verification
 python test_setup.py
@@ -244,5 +310,5 @@ python -m server.app
 
 ### Common Issues
 - **API Key Issues**: Check `.env` configuration
-- **Port Conflicts**: Ensure ports 5001/8082 are available
+- **Port Conflicts**: Ensure ports 5000/8082 are available
 - **CORS Errors**: Verify frontend/backend URL configuration

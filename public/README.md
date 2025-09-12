@@ -1,6 +1,6 @@
 # Frontend - Public Directory
 
-This directory contains all frontend assets for the "Meet in the Middle" web application.
+Frontend assets for the "Meet in the Middle" web application. The page loads a small bootstrap (`scripts/main.js`) first, discovers `/api/config`, then injects the Google Maps JS with the API key.
 
 ## 📁 Structure
 
@@ -11,7 +11,7 @@ public/
 │   └── main.css           # Application styles and responsive design
 ├── ⚡ scripts/
 │   └── main.js            # Frontend JavaScript logic (cleaned & optimized)
-└── � README.md           # This documentation
+└── 📄 README.md           # This documentation
 ```
 
 ## 🌐 Application
@@ -24,7 +24,7 @@ public/
   - Meeting point and alternative location display
   - Business filtering and discovery
   - Responsive design for all devices
-- **URL**: http://localhost:5001/
+- **URL**: http://localhost:8082/
 
 ## 🎨 Styles (`styles/main.css`)
 
@@ -47,7 +47,10 @@ public/
 
 ## ⚡ Scripts (`scripts/main.js`)
 
-**Recent Cleanup**: Reduced from 1266 lines to ~320 lines (75% reduction!)
+**Key behaviors:**
+- Loads before Maps JS to avoid race conditions
+- Fetches `/api/config` to get `apiBaseUrl` and whether a Google Maps key is present
+- Injects Maps JS only after `initMaps` is registered
 
 **Key Components:**
 - 🗺️ **Map Initialization**: Clean Google Maps setup with Places API
@@ -59,30 +62,30 @@ public/
 
 **JavaScript Architecture:**
 ```javascript
-// Configuration
-const API_BASE = 'http://localhost:5001';
-
 // Core Functions
 initMaps()              // Google Maps initialization
+setApiBase(url)         // Called after /api/config discovery
 displayResultsOnMap()   // Show meeting points and routes
 displayBusinesses()     // Show nearby businesses
 closeAllInfoWindows()   // Unified popup management
 checkApiStatus()        // Backend connectivity
 ```
 
-**Removed Complexity:**
-- ❌ Complex route click detection with invisible polylines
-- ❌ Excessive debug logging and test functions
-- ❌ Unnecessary fallback mechanisms
-- ❌ Debug buttons and development utilities
+**UX notes:**
+- Transit-only: no driving fallback is rendered
+- If no transit route exists, we show a concise error message and do not leave residual overlays
+- If calls succeed but no meeting place qualifies, we show a "no meeting point found" message
 
 ## 🔗 API Integration
 
-The frontend communicates with the Flask API server at **http://localhost:5001**:
+The frontend discovers the API base from `/api/config` served by the backend. Typical local URLs:
 
-- **`/api/health`**: Server status check
-- **`/api/find-meeting-point`**: Find optimal meeting locations
-- **`/api/config`**: Google Maps API key configuration
+- **API**: http://localhost:5001
+- **Web**: http://localhost:8082
+
+Endpoints used:
+- `GET /api/config` — configuration and API base
+- `POST /api/find-middle-point` — meeting point search
 
 ## 🎯 Interactive Features
 
@@ -108,10 +111,14 @@ The frontend communicates with the Flask API server at **http://localhost:5001**
 
 ## 🛠️ Development
 
-**File Serving:**
-- Static files served by Flask backend
-- Available at http://localhost:5001
-- No separate static server needed
+Serve the static files with the included server (recommended via project `run_dev.py`):
+
+```bash
+source ../env/bin/activate
+python ../run_dev.py
+```
+
+This starts the API at 5001 and the static server at 8082, opening your browser automatically.
 
 **Code Quality:**
 - Clean, maintainable JavaScript (75% size reduction)
