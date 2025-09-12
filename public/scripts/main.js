@@ -199,7 +199,7 @@ function initMaps() {
             zIndex: 999
         },
         suppressMarkers: true,
-        preserveViewport: false
+        preserveViewport: true
     });
     directionsRendererAlt2 = new google.maps.DirectionsRenderer({
         map: map,
@@ -211,10 +211,10 @@ function initMaps() {
             zIndex: 999
         },
         suppressMarkers: true,
-        preserveViewport: false
+        preserveViewport: true
     });
     
-    checkApiStatus();
+    // Backend connectivity check removed per request
     
     // Initialize Google Places Autocomplete
     initializeAutocomplete();
@@ -226,22 +226,7 @@ function initMaps() {
     initializeLocationDetection();
 }
 
-// Check API status
-async function checkApiStatus() {
-    const statusDiv = document.getElementById('status');
-    try {
-        const response = await fetch(`${API_BASE}/`);
-        if (response.ok) {
-            statusDiv.className = 'status-indicator status-ok';
-            statusDiv.textContent = '✅ API Server Connected';
-        } else {
-            throw new Error('API not responding');
-        }
-    } catch (error) {
-        statusDiv.className = 'status-indicator status-error';
-        statusDiv.textContent = '❌ API Server Offline';
-    }
-}
+// Backend connectivity indicator removed per request
 
 // Clear all markers from map
 function clearMarkers() {
@@ -859,8 +844,7 @@ function displayResultsOnMap(data, options = {}) {
     colors = { A: '#4285f4', B: '#ea4335' },
         labelSuffix = 'Default',
         showBusinesses = true,
-    optimalColor = '#34a853',
-    betweenColor = null
+    optimalColor = '#34a853'
     } = options;
     
     // Validate data structure
@@ -899,14 +883,24 @@ function displayResultsOnMap(data, options = {}) {
         return;
     }
     
-    // Center map near a sensible point: midpoint if available, else optimal, else average of inputs
+    // Center map:
+    // - If this is the Route Midpoint overlay and route_midpoint exists, center there.
+    // - Else prefer optimal; if none, center on Address 1, else average of inputs; midpoint as last resort.
+    const isRouteOverlay = (labelSuffix && /route/i.test(labelSuffix));
+    const routeMidpoint = (data && data.route_midpoint && typeof data.route_midpoint.lat === 'number' && typeof data.route_midpoint.lng === 'number')
+        ? { lat: data.route_midpoint.lat, lng: data.route_midpoint.lng }
+        : null;
     let center;
-    if (midpoint && typeof midpoint.lat === 'number' && typeof midpoint.lng === 'number') {
-        center = { lat: midpoint.lat, lng: midpoint.lng };
+    if (isRouteOverlay && routeMidpoint) {
+        center = routeMidpoint;
     } else if (optimal && typeof optimal.lat === 'number' && typeof optimal.lng === 'number') {
         center = { lat: optimal.lat, lng: optimal.lng };
+    } else if (address1 && typeof address1.lat === 'number' && typeof address1.lng === 'number') {
+        center = { lat: address1.lat, lng: address1.lng };
     } else if (address1 && address2) {
         center = { lat: (address1.lat + address2.lat) / 2, lng: (address1.lng + address2.lng) / 2 };
+    } else if (midpoint && typeof midpoint.lat === 'number' && typeof midpoint.lng === 'number') {
+        center = { lat: midpoint.lat, lng: midpoint.lng };
     } else {
         center = map.getCenter();
     }
@@ -970,48 +964,7 @@ function displayResultsOnMap(data, options = {}) {
         // Display routes from both addresses to the optimal meeting point
         displayRoutesWithRenderers(address1, address2, optimal, renderers.A, renderers.B, colors.A, colors.B, labelSuffix);
 
-        // If backend provided an overview polyline for the route between A and B (route-midpoint algo), draw it
-        if (data.route && data.route.overview_polyline && typeof google.maps.geometry !== 'undefined' && google.maps.geometry.encoding) {
-            try {
-                const path = google.maps.geometry.encoding.decodePath(data.route.overview_polyline);
-                const poly = new google.maps.Polyline({
-                    path,
-                    geodesic: true,
-                    strokeColor: betweenColor || '#7b1fa2',
-                    strokeOpacity: 0.9,
-                    strokeWeight: 4,
-                    clickable: true,
-                    zIndex: 998
-                });
-                poly.setMap(map);
-
-                // Build info content
-                const distance = data.route.distance_meters ? `${(data.route.distance_meters/1000).toFixed(1)} km` : 'N/A';
-                const duration = data.route.duration_seconds ? `${Math.round(data.route.duration_seconds/60)} min` : 'N/A';
-                const infoWindow = new google.maps.InfoWindow({
-                    content: `
-                        <div style="padding:8px; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
-                            <div style="font-weight:600; margin-bottom:6px; color:${betweenColor || '#7b1fa2'};">🚇 Fastest Transit Route ${labelSuffix ? '('+labelSuffix+')' : ''}</div>
-                            <div>⏱️ Duration: ${duration}</div>
-                            <div>📏 Distance: ${distance}</div>
-                        </div>
-                    `
-                });
-
-                const listener = poly.addListener('click', (e) => {
-                    routeClickedRecently = true;
-                    setTimeout(() => { routeClickedRecently = false; }, 200);
-                    closeAllInfoWindows();
-                    infoWindow.setPosition(e.latLng);
-                    infoWindow.open(map);
-                    openInfoWindows.push(infoWindow);
-                });
-
-                routes.push({ polyline: poly, infoWindow, listener });
-            } catch (err) {
-                console.error('Failed to decode/plot overview polyline:', err);
-            }
-        }
+    // Previously: drew a separate A↔B fastest route polyline. Removed per request.
         
         // Add info window for optimal point
         const meetingPointInfoWindow = new google.maps.InfoWindow({
@@ -1043,7 +996,8 @@ function displayResultsOnMap(data, options = {}) {
             // Render route sampling points if provided (robust path)
             try {
                 const samples = data.route_sampling_points;
-                if (Array.isArray(samples)) {
+                const allowSamples = (typeof window.SHOW_ROUTE_SAMPLES === 'undefined' ? true : !!window.SHOW_ROUTE_SAMPLES) && (options.showSamples !== false);
+                if (Array.isArray(samples) && allowSamples) {
                     if (samples.length > 0) {
                         if (sampleMarkers.length === 0) {
                             console.log('[Sampling] (displayResultsOnMap) Rendering', samples.length, 'samples');
@@ -1055,35 +1009,28 @@ function displayResultsOnMap(data, options = {}) {
                         console.warn('[Sampling] (displayResultsOnMap) Empty samples; trying polyline fallback');
                         const poly = data.route && data.route.overview_polyline;
                         const pts = decodePolyline(poly);
-                        if (pts && pts.length && sampleMarkers.length === 0) {
+                        if (allowSamples && pts && pts.length && sampleMarkers.length === 0) {
                             const step = Math.max(1, Math.floor(pts.length / 40));
                             const fallbackSamples = pts.filter((_, i) => i % step === 0);
                             renderSampledPoints(fallbackSamples.map(p => ({ lat: p.lat, lng: p.lng })), map, '#d50000');
                         }
                     }
+                } else if (!allowSamples) {
+                    console.log('[Sampling] (displayResultsOnMap) Skipped by config');
                 }
             } catch (e) {
                 console.warn('[Sampling] (displayResultsOnMap) Failed to render samples:', e);
             }
     } else if (midpoint && typeof midpoint.lat === 'number' && typeof midpoint.lng === 'number') {
-        // Fallback: show the midpoint as a marker and draw routes to it
-        const midMarker = new google.maps.Marker({
-            position: { lat: midpoint.lat, lng: midpoint.lng },
-            map: map,
-            title: `Midpoint ${labelSuffix ? '('+labelSuffix+')' : ''}`,
-            icon: {
-                url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
-                    <svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 50 50">
-                        <circle cx="25" cy="25" r="22" fill="${optimalColor}" stroke="white" stroke-width="4"/>
-                        <text x="25" y="31" text-anchor="middle" fill="white" font-family="Arial" font-size="16" font-weight="bold">M</text>
-                    </svg>
-                `),
-                scaledSize: new google.maps.Size(44, 44)
+        // Requested behavior: skip midpoint fallback routing; center on Address 1 instead
+        console.log('[Fallback] No optimal meeting point; centering on Address 1 and skipping midpoint routing.');
+        try {
+            if (address1 && typeof address1.lat === 'number' && typeof address1.lng === 'number') {
+                map.setCenter({ lat: address1.lat, lng: address1.lng });
             }
-        });
-        markers.push(midMarker);
-
-        displayRoutesWithRenderers(address1, address2, midpoint, renderers.A, renderers.B, colors.A, colors.B, labelSuffix);
+        } catch (e) {
+            console.warn('Failed to re-center on Address 1:', e);
+        }
     }
     
     // Display businesses within walking circles (only for primary/default to avoid clutter)
@@ -1308,6 +1255,179 @@ function updateBusinessCount() {
     }
 }
 
+// Simple HTML-escape for string injection
+function safeText(s) {
+    try {
+        return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    } catch (_) {
+        return '';
+    }
+}
+
+// Build HTML for a route's steps using existing formatting
+function buildInstructionsHtml(route, title, color) {
+    if (!route) return `<div style="padding:12px; color:#b00020;">No route available.</div>`;
+    let html = `
+        <div style="padding:12px;">
+            <h4 style="margin:0 0 10px; color:${color};">${title}</h4>
+    `;
+    try {
+        const legs = route.legs || [];
+        legs.forEach((leg, legIndex) => {
+            if (legs.length > 1) {
+                html += `<div style="margin:8px 0; font-weight:600; color:${color}">Leg ${legIndex+1}</div>`;
+            }
+            (leg.steps || []).forEach(step => {
+                const enhanced = formatEnhancedInstruction(step);
+                const distance = step.distance && step.distance.text || '';
+                const duration = step.duration && step.duration.text || '';
+                const bg = enhanced.isTransit ? '#f0f7ff' : '#f8f9fa';
+                const border = enhanced.isTransit ? color : '#e1e3e1';
+                html += `
+                    <div style="margin-bottom:10px; padding:10px; border-left:4px solid ${border}; background:${bg}; border-radius:0 6px 6px 0;">
+                        <div style="font-size:13px; font-weight:500; color:#202124;">${enhanced.instruction}</div>
+                        ${enhanced.stopDetails ? `<div style=\"font-size:12px; color:#1a73e8;\">📍 ${enhanced.stopDetails}</div>` : ''}
+                        ${enhanced.timeDetails ? `<div style=\"font-size:12px; color:#34a853;\">⏰ ${enhanced.timeDetails}</div>` : ''}
+                        <div style="font-size:12px; color:#5f6368;">📏 ${distance} • ⏱️ ${duration}</div>
+                    </div>
+                `;
+            });
+        });
+    } catch (e) {
+        html += `<div style="color:#b00020;">Failed to build instructions.</div>`;
+    }
+    html += `</div>`;
+    return html;
+}
+
+// Show a side-by-side panel of A/B routes for a given algorithm set
+function showSideBySideInstructions(kind) {
+    // Determine which renderers to use
+    const isDefault = (kind === 'default');
+    const renA = isDefault ? directionsRenderer1 : directionsRendererAlt1;
+    const renB = isDefault ? directionsRenderer2 : directionsRendererAlt2;
+    const dirA = renA && renA.getDirections && renA.getDirections();
+    const dirB = renB && renB.getDirections && renB.getDirections();
+    const routeA = dirA && dirA.routes && dirA.routes[0];
+    const routeB = dirB && dirB.routes && dirB.routes[0];
+
+    // Close any existing modal first
+    const oldOverlay = document.getElementById('route-side-by-side-overlay');
+    if (oldOverlay) oldOverlay.remove();
+
+    // Create backdrop overlay
+    const overlay = document.createElement('div');
+    overlay.id = 'route-side-by-side-overlay';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.style.position = 'fixed';
+    overlay.style.inset = '0';
+    overlay.style.background = 'rgba(0,0,0,0.4)';
+    overlay.style.display = 'flex';
+    overlay.style.alignItems = 'center';
+    overlay.style.justifyContent = 'center';
+    overlay.style.zIndex = '99999';
+
+    // Prevent background scroll
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    // Modal container
+    const modal = document.createElement('div');
+    modal.style.background = 'white';
+    modal.style.borderRadius = '10px';
+    modal.style.boxShadow = '0 10px 30px rgba(0,0,0,0.2)';
+    modal.style.width = 'min(1000px, 92vw)';
+    modal.style.maxHeight = '86vh';
+    modal.style.display = 'flex';
+    modal.style.flexDirection = 'column';
+    modal.style.overflow = 'hidden';
+
+    const header = document.createElement('div');
+    header.style.display = 'flex';
+    header.style.justifyContent = 'space-between';
+    header.style.alignItems = 'center';
+    header.style.padding = '12px 16px';
+    header.style.background = '#f8f9fa';
+    header.style.borderBottom = '1px solid #e1e3e1';
+    header.innerHTML = `
+        <div style="font-weight:600; font-size:16px;">🧭 ${isDefault ? 'Default' : 'Route Midpoint'} — Side-by-side routes</div>
+        <button id="close-side-by-side" style="border:1px solid #dadce0; background:white; border-radius:6px; padding:6px 10px; cursor:pointer;">Close</button>
+    `;
+
+    const content = document.createElement('div');
+    content.style.display = 'grid';
+    content.style.gridTemplateColumns = '1fr 1fr';
+    content.style.gap = '0';
+    content.style.overflow = 'auto';
+    content.style.padding = '8px';
+
+    const left = document.createElement('div');
+    left.style.borderRight = '1px solid #e1e3e1';
+    left.style.paddingRight = '8px';
+    const startATitle = routeA && routeA.legs && routeA.legs[0] && routeA.legs[0].start_address
+        ? safeText(routeA.legs[0].start_address)
+        : 'From A';
+    left.innerHTML = buildInstructionsHtml(routeA, startATitle, isDefault ? '#4285f4' : '#9c27b0');
+
+    const right = document.createElement('div');
+    right.style.paddingLeft = '8px';
+    const startBTitle = routeB && routeB.legs && routeB.legs[0] && routeB.legs[0].start_address
+        ? safeText(routeB.legs[0].start_address)
+        : 'From B';
+    right.innerHTML = buildInstructionsHtml(routeB, startBTitle, isDefault ? '#ea4335' : '#0f9d58');
+
+    content.appendChild(left);
+    content.appendChild(right);
+
+    modal.appendChild(header);
+    modal.appendChild(content);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    const close = () => {
+        overlay.remove();
+        document.body.style.overflow = prevOverflow || '';
+        if (lastActive) {
+            try { lastActive.focus(); } catch (_) {}
+        }
+        window.removeEventListener('keydown', onKeydown);
+    };
+
+    // Close handlers
+    const closeBtn = document.getElementById('close-side-by-side');
+    closeBtn.addEventListener('click', close);
+    overlay.addEventListener('click', (e) => {
+        // Only close on backdrop click (not inner modal clicks)
+        if (e.target === overlay) close();
+    });
+
+    const onKeydown = (e) => { if (e.key === 'Escape') close(); };
+    window.addEventListener('keydown', onKeydown);
+
+    // Focus management
+    const lastActive = document.activeElement;
+    setTimeout(() => { try { closeBtn.focus(); } catch (_) {} }, 0);
+}
+
+function attachRouteCardClickHandlers(resultsDiv) {
+    try {
+        const items = resultsDiv.querySelectorAll('.result-item[data-card-kind]');
+        items.forEach(el => {
+            const kind = el.getAttribute('data-card-kind');
+            el.addEventListener('click', () => showSideBySideInstructions(kind));
+            el.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    showSideBySideInstructions(kind);
+                }
+            });
+        });
+    } catch (e) {
+        console.warn('Failed to attach card handlers', e);
+    }
+}
+
 // Apply filters function called by the Apply Filters button
 function applyFilters() {
     if (categorizedBusinesses) {
@@ -1332,15 +1452,68 @@ document.getElementById('searchForm').addEventListener('submit', async (e) => {
         return;
     }
     
-    const loadingDiv = document.getElementById('loading');
     const resultsDiv = document.getElementById('results');
     const searchBtn = document.getElementById('searchBtn');
     
     // Show loading state
-    loadingDiv.style.display = 'block';
     resultsDiv.innerHTML = '';
     searchBtn.disabled = true;
     searchBtn.textContent = '🔍 Analyzing...';
+    // Show global overlay spinner and allow a frame to paint
+    try {
+        let overlay = document.getElementById('global-loading-overlay');
+        if (!overlay) {
+            // Create overlay dynamically if not present
+            overlay = document.createElement('div');
+            overlay.id = 'global-loading-overlay';
+            overlay.setAttribute('role', 'dialog');
+            overlay.setAttribute('aria-modal', 'true');
+            overlay.innerHTML = '<div class="loading-modal"><div class="spinner-wrap"><div class="spinner-ring"></div></div><div class="loading-text">Finding the optimal meeting point…</div></div>';
+            document.body.appendChild(overlay);
+        }
+        // Apply essential inline styles to guarantee visibility even if CSS is stale
+        overlay.style.position = 'fixed';
+        overlay.style.top = '0';
+        overlay.style.left = '0';
+        overlay.style.right = '0';
+        overlay.style.bottom = '0';
+        overlay.style.background = 'rgba(0,0,0,0.45)';
+        overlay.style.display = 'flex';
+        overlay.style.alignItems = 'center';
+        overlay.style.justifyContent = 'center';
+        overlay.style.zIndex = '100000';
+        overlay.setAttribute('aria-hidden', 'false');
+        document.body.style.overflow = 'hidden';
+        // Inline fallback styles for spinner if stylesheet not applied
+        const wrap = overlay.querySelector('.spinner-wrap');
+        if (wrap) {
+            wrap.style.width = '64px';
+            wrap.style.height = '64px';
+            wrap.style.position = 'relative';
+            wrap.style.margin = '0 auto 12px';
+        }
+        const ring = overlay.querySelector('.spinner-ring');
+        if (ring) {
+            ring.style.position = 'absolute';
+            ring.style.top = '0';
+            ring.style.left = '0';
+            ring.style.right = '0';
+            ring.style.bottom = '0';
+            ring.style.borderRadius = '50%';
+            ring.style.border = '6px solid rgba(255,255,255,0.12)';
+            ring.style.borderTopColor = '#7b9cff';
+            ring.style.animation = 'globalSpin 1.1s linear infinite';
+        }
+        // Inject keyframes if needed
+        if (!document.getElementById('global-loading-keyframes')) {
+            const style = document.createElement('style');
+            style.id = 'global-loading-keyframes';
+            style.textContent = '@keyframes globalSpin { to { transform: rotate(360deg); } }';
+            document.head.appendChild(style);
+        }
+        // Let browser paint before heavy work
+        await new Promise(r => requestAnimationFrame(() => r()));
+    } catch (_) {}
     
     // Clear previous results
     clearMarkers();
@@ -1398,7 +1571,8 @@ document.getElementById('searchForm').addEventListener('submit', async (e) => {
                     colors: { A: '#4285f4', B: '#ea4335' },
                     labelSuffix: 'Default',
                     showBusinesses: true,
-                    optimalColor: '#34a853'
+                    optimalColor: '#34a853',
+                    showSamples: (typeof window.SHOW_ROUTE_SAMPLES === 'undefined' ? true : !!window.SHOW_ROUTE_SAMPLES)
                 });
             }, 50);
         }
@@ -1419,13 +1593,51 @@ document.getElementById('searchForm').addEventListener('submit', async (e) => {
                     labelSuffix: 'Route Midpoint',
                     showBusinesses: false,
                     optimalColor: '#fbbc05',
-                    betweenColor: '#7b1fa2'
+                    showSamples: (typeof window.SHOW_ROUTE_SAMPLES === 'undefined' ? true : !!window.SHOW_ROUTE_SAMPLES)
                 });
-                // Render sampled points from route algorithm
-                if (resRoute.data.route_sampling_points) {
-                    if (!resRoute.data.route_sampling_points.length) {
-                        console.warn('[Sampling] route_sampling_points empty in API response');
-                        // Fallback: generate sparse samples from overview polyline
+                // Render sampled points from route algorithm (honor global config)
+                const allowSamples = (typeof window.SHOW_ROUTE_SAMPLES === 'undefined' ? true : !!window.SHOW_ROUTE_SAMPLES);
+                if (allowSamples && sampleMarkers.length === 0) {
+                    if (resRoute.data.route_sampling_points) {
+                        if (!resRoute.data.route_sampling_points.length) {
+                            console.warn('[Sampling] route_sampling_points empty in API response');
+                            // Fallback: generate sparse samples from overview polyline
+                            try {
+                                const poly = resRoute.data.route && resRoute.data.route.overview_polyline;
+                                if (!poly) return; // no polyline to sample from
+                                const pts = decodePolyline(poly);
+                                if (pts && pts.length) {
+                                    const step = Math.max(1, Math.floor(pts.length / 40));
+                                    const fallbackSamples = pts.filter((_, i) => i % step === 0);
+                                    renderSampledPoints(fallbackSamples.map(p => ({ lat: p.lat, lng: p.lng })), map, '#d50000');
+                                }
+                            } catch (e) {
+                                console.warn('[Sampling] Fallback sampling failed:', e);
+                            }
+                        } else {
+                            console.log('[Sampling] Received', resRoute.data.route_sampling_points.length, 'sampling points from backend');
+                            console.log('[Sampling] First sample point example:', resRoute.data.route_sampling_points[0]);
+                            renderSampledPoints(resRoute.data.route_sampling_points, map, '#7b1fa2');
+                            // Auto-fit bounds to include addresses and sampling points once (helps if markers off-screen)
+                            try {
+                                const bounds = new google.maps.LatLngBounds();
+                                if (resRoute.data.address1 && resRoute.data.address1.geocoded)
+                                    bounds.extend(new google.maps.LatLng(resRoute.data.address1.geocoded.lat, resRoute.data.address1.geocoded.lng));
+                                if (resRoute.data.address2 && resRoute.data.address2.geocoded)
+                                    bounds.extend(new google.maps.LatLng(resRoute.data.address2.geocoded.lat, resRoute.data.address2.geocoded.lng));
+                                resRoute.data.route_sampling_points.slice(0, 200).forEach(pt => {
+                                    if (typeof pt.lat === 'number' && typeof pt.lng === 'number') {
+                                        bounds.extend(new google.maps.LatLng(pt.lat, pt.lng));
+                                    }
+                                });
+                                map.fitBounds(bounds);
+                            } catch (e) {
+                                console.warn('[Sampling] Failed to fit bounds:', e);
+                            }
+                        }
+                    } else {
+                        console.warn('[Sampling] route_sampling_points key missing in response');
+                        // Fallback: decode route overview polyline and render sparse points
                         try {
                             const poly = resRoute.data.route && resRoute.data.route.overview_polyline;
                             if (!poly) return; // no polyline to sample from
@@ -1436,54 +1648,33 @@ document.getElementById('searchForm').addEventListener('submit', async (e) => {
                                 renderSampledPoints(fallbackSamples.map(p => ({ lat: p.lat, lng: p.lng })), map, '#d50000');
                             }
                         } catch (e) {
-                            console.warn('[Sampling] Fallback sampling failed:', e);
-                        }
-                    } else {
-                        console.log('[Sampling] Received', resRoute.data.route_sampling_points.length, 'sampling points from backend');
-                        console.log('[Sampling] First sample point example:', resRoute.data.route_sampling_points[0]);
-                        renderSampledPoints(resRoute.data.route_sampling_points, map, '#7b1fa2');
-                        // Auto-fit bounds to include addresses and sampling points once (helps if markers off-screen)
-                        try {
-                            const bounds = new google.maps.LatLngBounds();
-                            if (resRoute.data.address1 && resRoute.data.address1.geocoded)
-                                bounds.extend(new google.maps.LatLng(resRoute.data.address1.geocoded.lat, resRoute.data.address1.geocoded.lng));
-                            if (resRoute.data.address2 && resRoute.data.address2.geocoded)
-                                bounds.extend(new google.maps.LatLng(resRoute.data.address2.geocoded.lat, resRoute.data.address2.geocoded.lng));
-                            resRoute.data.route_sampling_points.slice(0, 200).forEach(pt => {
-                                if (typeof pt.lat === 'number' && typeof pt.lng === 'number') {
-                                    bounds.extend(new google.maps.LatLng(pt.lat, pt.lng));
-                                }
-                            });
-                            map.fitBounds(bounds);
-                        } catch (e) {
-                            console.warn('[Sampling] Failed to fit bounds:', e);
+                            console.warn('[Sampling] Polyline fallback failed:', e);
                         }
                     }
-                } else {
-                    console.warn('[Sampling] route_sampling_points key missing in response');
-                    // Fallback: decode route overview polyline and render sparse points
-                    try {
-                        const poly = resRoute.data.route && resRoute.data.route.overview_polyline;
-                        if (!poly) return; // no polyline to sample from
-                        const pts = decodePolyline(poly);
-                        if (pts && pts.length) {
-                            const step = Math.max(1, Math.floor(pts.length / 40));
-                            const fallbackSamples = pts.filter((_, i) => i % step === 0);
-                            renderSampledPoints(fallbackSamples.map(p => ({ lat: p.lat, lng: p.lng })), map, '#d50000');
-                        }
-                    } catch (e) {
-                        console.warn('[Sampling] Polyline fallback failed:', e);
+                } else if (!allowSamples) {
+                    console.log('[Sampling] Skipped overlay sampling by config');
+                }
+                // Finally, center on the route midpoint if present (may override DirectionsRenderer/fitBounds changes)
+                try {
+                    const rm = resRoute && resRoute.data && resRoute.data.route_midpoint;
+                    if (rm && typeof rm.lat === 'number' && typeof rm.lng === 'number') {
+                        const target = { lat: rm.lat, lng: rm.lng };
+                        // use a couple of delays to win against late viewport changes
+                        setTimeout(() => { try { map.setCenter(target); } catch (_) {} }, 300);
+                        setTimeout(() => { try { map.setCenter(target); } catch (_) {} }, 1200);
                     }
+                } catch (e) {
+                    console.warn('Failed to center on route_midpoint:', e);
                 }
             }, 100);
         }
 
         // Update results panel summary for both
         const summaries = [];
-        if (okDefault && resDefault.data.optimal_meeting_point) {
+    if (okDefault && resDefault.data.optimal_meeting_point) {
             const mp = resDefault.data.optimal_meeting_point;
             summaries.push(`
-                <div class="result-item">
+        <div class="result-item" data-card-kind="default" role="button" tabindex="0" style="cursor:pointer;">
                     <h4>🎯 Optimal (Default)</h4>
                     <strong>${mp.name}</strong><br>
                     📍 ${mp.formatted_address}<br>
@@ -1493,10 +1684,10 @@ document.getElementById('searchForm').addEventListener('submit', async (e) => {
                 </div>
             `);
         }
-        if (okRoute && resRoute.data.optimal_meeting_point) {
+    if (okRoute && resRoute.data.optimal_meeting_point) {
             const mp2 = resRoute.data.optimal_meeting_point;
             summaries.push(`
-                <div class="result-item">
+        <div class="result-item" data-card-kind="route" role="button" tabindex="0" style="cursor:pointer;">
                     <h4>🎯 Optimal (Route Midpoint)</h4>
                     <strong>${mp2.name}</strong><br>
                     📍 ${mp2.formatted_address}<br>
@@ -1522,6 +1713,7 @@ document.getElementById('searchForm').addEventListener('submit', async (e) => {
         }
         if (summaries.length > 0) {
             resultsDiv.innerHTML = summaries.join('');
+            attachRouteCardClickHandlers(resultsDiv);
         } else {
             resultsDiv.innerHTML = `
                 <div class="error">
@@ -1540,9 +1732,16 @@ document.getElementById('searchForm').addEventListener('submit', async (e) => {
         `;
     } finally {
         console.log('Resetting UI state');
-        loadingDiv.style.display = 'none';
         searchBtn.disabled = false;
         searchBtn.textContent = '🚇 Find Meeting Point';
+        try {
+            const overlay = document.getElementById('global-loading-overlay');
+            if (overlay) {
+                overlay.style.display = 'none';
+                overlay.setAttribute('aria-hidden', 'true');
+                document.body.style.overflow = '';
+            }
+        } catch (_) {}
         console.log('=== FRONTEND: Request completed ===');
     }
 });

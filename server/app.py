@@ -328,11 +328,13 @@ def get_config():
     """
     Get frontend configuration including Google Maps API key
     """
+    show_samples = os.getenv('SHOW_ROUTE_SAMPLES', 'true').lower() in ('1','true','yes','on')
     return jsonify({
         'success': True,
         'data': {
             'googleMapsApiKey': api_key if api_key and api_key != "your_api_key_here" else None,
-            'apiBaseUrl': request.host_url.rstrip('/')
+            'apiBaseUrl': request.host_url.rstrip('/'),
+            'showRouteSamples': show_samples
         }
     })
 
