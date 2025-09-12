@@ -121,9 +121,12 @@
                     if (base) {
                         window.API_BASE = base;
                     }
+                        if (typeof config.data.showRouteSamples !== 'undefined') {
+                            window.SHOW_ROUTE_SAMPLES = !!config.data.showRouteSamples;
+                        }
                     // Load main app script next so it can read window.API_BASE
                     var app = document.createElement('script');
-                    app.src = 'scripts/main.js?v=16';
+                        app.src = 'scripts/main.js?v=19';
                     // For dynamically inserted scripts, set async=false to ensure execution before onload
                     app.async = false;
                     app.onload = function() {

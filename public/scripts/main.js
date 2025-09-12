@@ -971,7 +971,7 @@ function displayResultsOnMap(data, options = {}) {
         displayRoutesWithRenderers(address1, address2, optimal, renderers.A, renderers.B, colors.A, colors.B, labelSuffix);
 
         // If backend provided an overview polyline for the route between A and B (route-midpoint algo), draw it
-        if (data.route && data.route.overview_polyline && typeof google.maps.geometry !== 'undefined' && google.maps.geometry.encoding) {
+    if (data.route && data.route.overview_polyline && typeof google.maps.geometry !== 'undefined' && google.maps.geometry.encoding) {
             try {
                 const path = google.maps.geometry.encoding.decodePath(data.route.overview_polyline);
                 const poly = new google.maps.Polyline({
@@ -1043,7 +1043,8 @@ function displayResultsOnMap(data, options = {}) {
             // Render route sampling points if provided (robust path)
             try {
                 const samples = data.route_sampling_points;
-                if (Array.isArray(samples)) {
+                const allowSamples = (typeof window.SHOW_ROUTE_SAMPLES === 'undefined' ? true : !!window.SHOW_ROUTE_SAMPLES) && (options.showSamples !== false);
+                if (Array.isArray(samples) && allowSamples) {
                     if (samples.length > 0) {
                         if (sampleMarkers.length === 0) {
                             console.log('[Sampling] (displayResultsOnMap) Rendering', samples.length, 'samples');
@@ -1055,12 +1056,14 @@ function displayResultsOnMap(data, options = {}) {
                         console.warn('[Sampling] (displayResultsOnMap) Empty samples; trying polyline fallback');
                         const poly = data.route && data.route.overview_polyline;
                         const pts = decodePolyline(poly);
-                        if (pts && pts.length && sampleMarkers.length === 0) {
+                        if (allowSamples && pts && pts.length && sampleMarkers.length === 0) {
                             const step = Math.max(1, Math.floor(pts.length / 40));
                             const fallbackSamples = pts.filter((_, i) => i % step === 0);
                             renderSampledPoints(fallbackSamples.map(p => ({ lat: p.lat, lng: p.lng })), map, '#d50000');
                         }
                     }
+                } else if (!allowSamples) {
+                    console.log('[Sampling] (displayResultsOnMap) Skipped by config');
                 }
             } catch (e) {
                 console.warn('[Sampling] (displayResultsOnMap) Failed to render samples:', e);
@@ -1398,7 +1401,8 @@ document.getElementById('searchForm').addEventListener('submit', async (e) => {
                     colors: { A: '#4285f4', B: '#ea4335' },
                     labelSuffix: 'Default',
                     showBusinesses: true,
-                    optimalColor: '#34a853'
+                    optimalColor: '#34a853',
+                    showSamples: (typeof window.SHOW_ROUTE_SAMPLES === 'undefined' ? true : !!window.SHOW_ROUTE_SAMPLES)
                 });
             }, 50);
         }
@@ -1419,13 +1423,52 @@ document.getElementById('searchForm').addEventListener('submit', async (e) => {
                     labelSuffix: 'Route Midpoint',
                     showBusinesses: false,
                     optimalColor: '#fbbc05',
-                    betweenColor: '#7b1fa2'
+                    betweenColor: '#7b1fa2',
+                    showSamples: (typeof window.SHOW_ROUTE_SAMPLES === 'undefined' ? true : !!window.SHOW_ROUTE_SAMPLES)
                 });
-                // Render sampled points from route algorithm
-                if (resRoute.data.route_sampling_points) {
-                    if (!resRoute.data.route_sampling_points.length) {
-                        console.warn('[Sampling] route_sampling_points empty in API response');
-                        // Fallback: generate sparse samples from overview polyline
+                // Render sampled points from route algorithm (honor global config)
+                const allowSamples = (typeof window.SHOW_ROUTE_SAMPLES === 'undefined' ? true : !!window.SHOW_ROUTE_SAMPLES);
+                if (allowSamples && sampleMarkers.length === 0) {
+                    if (resRoute.data.route_sampling_points) {
+                        if (!resRoute.data.route_sampling_points.length) {
+                            console.warn('[Sampling] route_sampling_points empty in API response');
+                            // Fallback: generate sparse samples from overview polyline
+                            try {
+                                const poly = resRoute.data.route && resRoute.data.route.overview_polyline;
+                                if (!poly) return; // no polyline to sample from
+                                const pts = decodePolyline(poly);
+                                if (pts && pts.length) {
+                                    const step = Math.max(1, Math.floor(pts.length / 40));
+                                    const fallbackSamples = pts.filter((_, i) => i % step === 0);
+                                    renderSampledPoints(fallbackSamples.map(p => ({ lat: p.lat, lng: p.lng })), map, '#d50000');
+                                }
+                            } catch (e) {
+                                console.warn('[Sampling] Fallback sampling failed:', e);
+                            }
+                        } else {
+                            console.log('[Sampling] Received', resRoute.data.route_sampling_points.length, 'sampling points from backend');
+                            console.log('[Sampling] First sample point example:', resRoute.data.route_sampling_points[0]);
+                            renderSampledPoints(resRoute.data.route_sampling_points, map, '#7b1fa2');
+                            // Auto-fit bounds to include addresses and sampling points once (helps if markers off-screen)
+                            try {
+                                const bounds = new google.maps.LatLngBounds();
+                                if (resRoute.data.address1 && resRoute.data.address1.geocoded)
+                                    bounds.extend(new google.maps.LatLng(resRoute.data.address1.geocoded.lat, resRoute.data.address1.geocoded.lng));
+                                if (resRoute.data.address2 && resRoute.data.address2.geocoded)
+                                    bounds.extend(new google.maps.LatLng(resRoute.data.address2.geocoded.lat, resRoute.data.address2.geocoded.lng));
+                                resRoute.data.route_sampling_points.slice(0, 200).forEach(pt => {
+                                    if (typeof pt.lat === 'number' && typeof pt.lng === 'number') {
+                                        bounds.extend(new google.maps.LatLng(pt.lat, pt.lng));
+                                    }
+                                });
+                                map.fitBounds(bounds);
+                            } catch (e) {
+                                console.warn('[Sampling] Failed to fit bounds:', e);
+                            }
+                        }
+                    } else {
+                        console.warn('[Sampling] route_sampling_points key missing in response');
+                        // Fallback: decode route overview polyline and render sparse points
                         try {
                             const poly = resRoute.data.route && resRoute.data.route.overview_polyline;
                             if (!poly) return; // no polyline to sample from
@@ -1436,44 +1479,11 @@ document.getElementById('searchForm').addEventListener('submit', async (e) => {
                                 renderSampledPoints(fallbackSamples.map(p => ({ lat: p.lat, lng: p.lng })), map, '#d50000');
                             }
                         } catch (e) {
-                            console.warn('[Sampling] Fallback sampling failed:', e);
-                        }
-                    } else {
-                        console.log('[Sampling] Received', resRoute.data.route_sampling_points.length, 'sampling points from backend');
-                        console.log('[Sampling] First sample point example:', resRoute.data.route_sampling_points[0]);
-                        renderSampledPoints(resRoute.data.route_sampling_points, map, '#7b1fa2');
-                        // Auto-fit bounds to include addresses and sampling points once (helps if markers off-screen)
-                        try {
-                            const bounds = new google.maps.LatLngBounds();
-                            if (resRoute.data.address1 && resRoute.data.address1.geocoded)
-                                bounds.extend(new google.maps.LatLng(resRoute.data.address1.geocoded.lat, resRoute.data.address1.geocoded.lng));
-                            if (resRoute.data.address2 && resRoute.data.address2.geocoded)
-                                bounds.extend(new google.maps.LatLng(resRoute.data.address2.geocoded.lat, resRoute.data.address2.geocoded.lng));
-                            resRoute.data.route_sampling_points.slice(0, 200).forEach(pt => {
-                                if (typeof pt.lat === 'number' && typeof pt.lng === 'number') {
-                                    bounds.extend(new google.maps.LatLng(pt.lat, pt.lng));
-                                }
-                            });
-                            map.fitBounds(bounds);
-                        } catch (e) {
-                            console.warn('[Sampling] Failed to fit bounds:', e);
+                            console.warn('[Sampling] Polyline fallback failed:', e);
                         }
                     }
-                } else {
-                    console.warn('[Sampling] route_sampling_points key missing in response');
-                    // Fallback: decode route overview polyline and render sparse points
-                    try {
-                        const poly = resRoute.data.route && resRoute.data.route.overview_polyline;
-                        if (!poly) return; // no polyline to sample from
-                        const pts = decodePolyline(poly);
-                        if (pts && pts.length) {
-                            const step = Math.max(1, Math.floor(pts.length / 40));
-                            const fallbackSamples = pts.filter((_, i) => i % step === 0);
-                            renderSampledPoints(fallbackSamples.map(p => ({ lat: p.lat, lng: p.lng })), map, '#d50000');
-                        }
-                    } catch (e) {
-                        console.warn('[Sampling] Polyline fallback failed:', e);
-                    }
+                } else if (!allowSamples) {
+                    console.log('[Sampling] Skipped overlay sampling by config');
                 }
             }, 100);
         }
