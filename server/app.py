@@ -126,6 +126,7 @@ def health_check():
 
 
 @app.route('/api/geocode', methods=['POST'])
+@app.route('/geocode', methods=['POST'])
 def geocode_address():
     """
     Geocode a single address
@@ -170,6 +171,7 @@ def geocode_address():
 
 
 @app.route('/api/find-middle-point', methods=['POST'])
+@app.route('/find-middle-point', methods=['POST'])
 def find_middle_point():
     """
     Find the optimal middle point between two addresses
@@ -276,6 +278,7 @@ def find_middle_point():
 
 
 @app.route('/api/transit-time', methods=['POST'])
+@app.route('/transit-time', methods=['POST'])
 def get_transit_time():
     """
     Get transit time between two points
@@ -324,6 +327,7 @@ def get_transit_time():
 
 
 @app.route('/api/config', methods=['GET'])
+@app.route('/config', methods=['GET'])
 def get_config():
     """
     Get frontend configuration including Google Maps API key

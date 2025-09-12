@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
 Production runner for Meet in the Middle
-- Serves the Flask API under /api/*
-- Serves the frontend from ./public on the same port
-- Reads environment from .env (GOOGLE_MAPS_API_KEY, PORT, MIDDLEPOINT_ALGORITHM, SHOW_ROUTE_SAMPLES)
+- Serves the frontend SPA from ./public at "/"
+- Mounts the existing Flask API (server.app) at "/api"
+- Loads .env for GOOGLE_MAPS_API_KEY and other settings
 
 Usage:
   python3 run_prod.py
@@ -21,6 +21,10 @@ import sys
 from pathlib import Path
 from dotenv import load_dotenv
 
+from flask import Flask, send_from_directory
+from werkzeug.middleware.proxy_fix import ProxyFix
+import ssl
+
 # Ensure project root is on sys.path
 PROJECT_ROOT = Path(__file__).resolve().parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -29,51 +33,70 @@ if str(PROJECT_ROOT) not in sys.path:
 # Load env from .env if present
 load_dotenv(dotenv_path=PROJECT_ROOT / '.env')
 
-from flask import send_from_directory, abort
-
-# Import the Flask app (API) from server package
-from server.app import app  # noqa: E402
+# Import the Flask API app
+from server.app import app as api_app  # noqa: E402
 
 PUBLIC_DIR = PROJECT_ROOT / 'public'
-ASSET_SUBDIRS = {'scripts', 'styles', 'images', 'assets', 'fonts'}
 
-# --- Static file routes on same Flask app ---
-@app.route('/')
+# Build a small site app for static frontend
+site_app = Flask(__name__, static_folder=None)
+
+@site_app.route('/')
 def serve_index():
-    """Serve the main SPA index."""
     return send_from_directory(str(PUBLIC_DIR), 'index.html')
 
-@app.route('/favicon.ico')
+@site_app.route('/favicon.ico')
 def serve_favicon():
-    # Serve favicon if present, otherwise 404
-    fav = PUBLIC_DIR / 'favicon.ico'
-    if fav.exists():
-        return send_from_directory(str(PUBLIC_DIR), 'favicon.ico')
-    abort(404)
+    return send_from_directory(str(PUBLIC_DIR), 'favicon.ico')
 
-@app.route('/<path:filename>')
-def serve_static(filename: str):
-    """Serve static assets; fall back to index.html for unknown non-API routes (SPA).
-    Avoid intercepting API routes.
-    """
-    # Never handle API paths here
-    if filename.startswith('api/'):
-        abort(404)
+@site_app.route('/scripts/<path:filename>')
+def serve_scripts(filename):
+    return send_from_directory(str(PUBLIC_DIR / 'scripts'), filename)
 
-    requested = PUBLIC_DIR / filename
+@site_app.route('/styles/<path:filename>')
+def serve_styles(filename):
+    return send_from_directory(str(PUBLIC_DIR / 'styles'), filename)
 
-    # Serve existing files directly
-    if requested.is_file():
-        # Slightly longer cache for assets subfolders
-        cache_timeout = 3600 if (requested.parent.name in ASSET_SUBDIRS) else 300
-        return send_from_directory(str(PUBLIC_DIR), filename, cache_timeout=cache_timeout)
+@site_app.route('/images/<path:filename>')
+def serve_images(filename):
+    return send_from_directory(str(PUBLIC_DIR / 'images'), filename)
 
-    # If it's a directory request for a known asset subdir, abort 404
-    if requested.is_dir():
-        abort(404)
+@site_app.route('/assets/<path:filename>')
+def serve_assets(filename):
+    return send_from_directory(str(PUBLIC_DIR / 'assets'), filename)
 
-    # SPA fallback: serve index for any other unknown route
+@site_app.route('/<path:subpath>')
+def spa_fallback(subpath: str):
+    # Let the SPA handle client-side routes; serve file if exists else index.html
+    target = PUBLIC_DIR / subpath
+    try:
+        if target.is_file():
+            rel = target.relative_to(PUBLIC_DIR)
+            return send_from_directory(str(PUBLIC_DIR), str(rel))
+    except Exception:
+        pass
     return send_from_directory(str(PUBLIC_DIR), 'index.html')
+
+# Mount API under /api using DispatcherMiddleware
+try:
+    from werkzeug.middleware.dispatcher import DispatcherMiddleware
+    application = DispatcherMiddleware(site_app, {
+        '/api': api_app,
+    })
+except Exception:
+    # Fallback: just expose site_app; API will still be available at its native routes
+    # if they were registered without a prefix. This is not ideal; prefer Werkzeug >=2.1.
+    application = site_app
+
+# Respect reverse proxy headers (X-Forwarded-*) when behind a proxy/HTTPS terminator
+if os.getenv('TRUST_PROXY_HEADERS', '1') not in ('0', 'false', 'False', 'no', 'off'):
+    # Trust a single proxy hop by default; tune via env
+    x_for = int(os.getenv('PROXY_FIX_X_FOR', '1'))
+    x_proto = int(os.getenv('PROXY_FIX_X_PROTO', '1'))
+    x_host = int(os.getenv('PROXY_FIX_X_HOST', '1'))
+    x_port = int(os.getenv('PROXY_FIX_X_PORT', '1'))
+    x_prefix = int(os.getenv('PROXY_FIX_X_PREFIX', '1'))
+    application = ProxyFix(application, x_for=x_for, x_proto=x_proto, x_host=x_host, x_port=x_port, x_prefix=x_prefix)
 
 
 def main():
@@ -91,12 +114,43 @@ def main():
         print("Set it in your environment or .env file.")
         print("="*60 + "\n")
 
-    # Run Flask production server (for true production, run behind gunicorn/uwsgi)
-    # Debug off, threaded on for concurrency.
-    print(f"\n🚀 Starting Meet in the Middle (prod) on http://{host}:{port}")
-    print(" - Static: ./public (/, /scripts, /styles, etc)")
-    print(" - API:    /api/*")
-    app.run(host=host, port=port, debug=False, threaded=True)
+    ssl_cert = os.getenv('SSL_CERTFILE') or os.getenv('SSL_CERT')
+    ssl_key = os.getenv('SSL_KEYFILE') or os.getenv('SSL_KEY')
+    ssl_ca = os.getenv('SSL_CA_FILE') or os.getenv('SSL_CA')
+
+    if ssl_cert and ssl_key:
+        scheme = 'https'
+        print(f"\n🔐 Starting Meet in the Middle (prod) on https://{host}:{port}")
+        print(" - TLS: using provided SSL cert and key")
+        print(" - Frontend: / -> ./public/index.html")
+        print(" - API:      /api/*")
+
+        # Build SSL context
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        try:
+            if ssl_ca:
+                context.load_verify_locations(ssl_ca)
+        except Exception:
+            pass
+        context.load_cert_chain(certfile=ssl_cert, keyfile=ssl_key)
+
+        # Use Werkzeug's run_simple to serve HTTPS directly
+        from werkzeug.serving import run_simple
+        run_simple(hostname=host, port=port, application=application, ssl_context=context, threaded=True)
+    else:
+        print(f"\n🚀 Starting Meet in the Middle (prod) on http://{host}:{port}")
+        print(" - Frontend: / -> ./public/index.html")
+        print(" - API:      /api/*")
+
+        # Prefer waitress if available; otherwise use Werkzeug's run_simple
+        try:
+            from waitress import serve  # type: ignore
+            print("Using waitress WSGI server")
+            serve(application, host=host, port=port, threads=int(os.getenv('WSGI_THREADS', '8')))
+        except Exception as e:
+            print(f"[warn] waitress not available or failed ({e}); using Flask dev server")
+            from werkzeug.serving import run_simple
+            run_simple(hostname=host, port=port, application=application, threaded=True)
 
 
 if __name__ == '__main__':

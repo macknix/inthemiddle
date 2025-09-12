@@ -1966,7 +1966,20 @@ async function getCurrentLocationAndAddress() {
         locationStatus.textContent = '(detecting...)';
         locationStatus.style.color = '#666';
     }
-    
+    // Geolocation works only in secure contexts (https) except for localhost.
+    const isLocalhost = [/^localhost$/i, /^127\.0\.0\.1$/, /^\[::1\]$/].some(r => r.test(location.hostname));
+    const isSecureContext = (window.isSecureContext === true) || isLocalhost;
+
+    if (!isSecureContext) {
+        console.warn('Geolocation blocked: page is not served over HTTPS. Falling back to default address.');
+        if (locationStatus) {
+            locationStatus.textContent = '(requires HTTPS to detect location)';
+            locationStatus.style.color = '#ff9500';
+        }
+        setDefaultAddress();
+        return;
+    }
+
     if (!navigator.geolocation) {
         console.log('❌ Geolocation not supported by this browser');
         if (locationStatus) {
@@ -2002,7 +2015,7 @@ async function getCurrentLocationAndAddress() {
         await reverseGeocodeAndSetAddress(lat, lng);
         
     } catch (error) {
-        console.log('❌ Geolocation error:', error.message);
+    console.log('❌ Geolocation error:', error && error.message ? error.message : String(error));
         console.log('🔄 Falling back to default address');
         
         if (locationStatus) {
