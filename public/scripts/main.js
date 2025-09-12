@@ -214,7 +214,7 @@ function initMaps() {
         preserveViewport: true
     });
     
-    checkApiStatus();
+    // Backend connectivity check removed per request
     
     // Initialize Google Places Autocomplete
     initializeAutocomplete();
@@ -226,22 +226,7 @@ function initMaps() {
     initializeLocationDetection();
 }
 
-// Check API status
-async function checkApiStatus() {
-    const statusDiv = document.getElementById('status');
-    try {
-        const response = await fetch(`${API_BASE}/`);
-        if (response.ok) {
-            statusDiv.className = 'status-indicator status-ok';
-            statusDiv.textContent = '✅ API Server Connected';
-        } else {
-            throw new Error('API not responding');
-        }
-    } catch (error) {
-        statusDiv.className = 'status-indicator status-error';
-        statusDiv.textContent = '❌ API Server Offline';
-    }
-}
+// Backend connectivity indicator removed per request
 
 // Clear all markers from map
 function clearMarkers() {
