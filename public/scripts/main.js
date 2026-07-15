@@ -1,2125 +1,666 @@
-// Resolve API base dynamically, with safe fallback
-let API_BASE = (typeof window !== 'undefined' && window.API_BASE)
-    ? window.API_BASE
-    : 'http://localhost:5001';
+/* in the middle — frontend. Leaflet map + calls to the local Flask API.
+ *
+ * Two modes:
+ *  - "room" (default): the page is a shareable session (?room=<id>). Everyone
+ *    who opens the link joins with their own pin; pins sync by polling and
+ *    search results are shared with the whole room.
+ *  - "classic": the original single-screen mode — type two addresses.
+ */
 
-function setApiBase(base) {
-    if (typeof base === 'string' && base.trim()) {
-        API_BASE = base.trim().replace(/\/$/, '');
-        if (typeof window !== 'undefined') {
-            window.API_BASE = API_BASE;
-        }
-        try {
-            console.log('API base configured:', API_BASE);
-        } catch (_) {}
-    }
-}
+"use strict";
 
-// Expose setter for index.html/bootstrap script
-if (typeof window !== 'undefined') {
-    window.setApiBase = setApiBase;
-}
-let map;
-let directionsService;
-let directionsRenderer1, directionsRenderer2;
-let directionsRendererAlt1, directionsRendererAlt2; // for second algorithm
-let currentData = null;
-let markers = [];
-let businessMarkers = [];
-let sampleMarkers = [];
-let openInfoWindows = [];
-let routes = [];
-let categorizedBusinesses = {};
-let routeClickedRecently = false;
-let markerClickedRecently = false;
+/* One colour per participant, assigned by join order (classic uses 0 and 1). */
+const COLORS = ["#7fb4ff", "#ff8fb8", "#ffd479", "#9ef0a8", "#c9a2ff"];
+const POLL_MS = 3000;
 
-// Lightweight Google polyline decoder (returns array of {lat,lng})
-function decodePolyline(encoded) {
-    if (!encoded || typeof encoded !== 'string') return [];
-    let index = 0, lat = 0, lng = 0, coordinates = [];
-    while (index < encoded.length) {
-        let b, shift = 0, result = 0;
-        do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
-        const dlat = ((result & 1) ? ~(result >> 1) : (result >> 1));
-        lat += dlat;
-        shift = 0; result = 0;
-        do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
-        const dlng = ((result & 1) ? ~(result >> 1) : (result >> 1));
-        lng += dlng;
-        coordinates.push({ lat: lat / 1e5, lng: lng / 1e5 });
-    }
-    return coordinates;
-}
-
-// Business type icons mapping
-const businessIcons = {
-    restaurant: '🍽️',
-    cafe: '☕',
-    bar: '🍺',
-    shopping_mall: '🛍️',
-    park: '🌳',
-    tourist_attraction: '🏛️',
-    gym: '💪',
-    library: '📚'
+const state = {
+  mode: "room",
+  classic: { a: null, b: null, markers: { a: null, b: null } },
+  room: {
+    id: null,
+    pid: null,
+    participants: [],
+    resultsVersion: 0,
+    pollTimer: null,
+    youMarker: null,
+    youSet: false, // location chosen (by geolocation, search, click or drag)
+    otherMarkers: new Map(), // pid -> Leaflet marker
+  },
+  lastResults: null, // {candidates, points:[{label,color,lat,lon}], stats}
+  spotMarkers: [],
+  routeLayers: [],
+  activeIndex: null,
 };
 
-// Transport mode icons mapping
-const transportIcons = {
-    'BUS': '🚌',
-    'SUBWAY': '🚇',
-    'TRAIN': '🚂',
-    'TRAM': '🚊',
-    'RAIL': '🚆',
-    'METRO_RAIL': '🚇',
-    'MONORAIL': '🚝',
-    'HEAVY_RAIL': '🚆',
-    'COMMUTER_TRAIN': '🚆',
-    'HIGH_SPEED_TRAIN': '🚄',
-    'LONG_DISTANCE_TRAIN': '🚂',
-    'WALKING': '🚶',
-    'DRIVING': '🚗',
-    'BICYCLING': '🚴',
-    'FERRY': '⛴️',
-    'CABLE_CAR': '🚠',
-    'GONDOLA_LIFT': '🚡',
-    'FUNICULAR': '🚟',
-    'OTHER': '🚌' // Default fallback
-};
+/* ---------- map ---------- */
 
-// Initialize maps when Google Maps API is loaded
-function initMaps() {
-    console.log('Initializing Google Maps...');
-    
-    // Check if map element exists
-    const mapElement = document.getElementById('map');
-    if (!mapElement) {
-        console.error('Map element not found!');
-        return;
-    }
-    
-    // Main overview map
-    map = new google.maps.Map(mapElement, {
-        zoom: 13,
-        center: { lat: 40.7128, lng: -74.0060 }, // Default to NYC
-        mapTypeId: 'roadmap'
-    });
-    
-    // Initialize directions service and renderers
-    directionsService = new google.maps.DirectionsService();
-    
-    console.log('Google Maps initialized successfully');
-    
-    // Comprehensive map click handler for both POI and regular clicks
-    let lastMapClickTime = 0;
-    map.addListener('click', (event) => {
-        const currentTime = Date.now();
-        
-        // Debounce rapid clicks
-        if (currentTime - lastMapClickTime < 50) { // Reduced from 100ms to 50ms
-            return;
-        }
-        lastMapClickTime = currentTime;
-        
-        // Handle POI clicks - prevent default and create our own InfoWindow
-        if (event.placeId) {
-            // Prevent Google's default InfoWindow from opening
-            event.stop();
-            
-            markerClickedRecently = true;
-            setTimeout(() => { markerClickedRecently = false; }, 200);
-            
-            // Close existing InfoWindows first
-            closeAllInfoWindows();
-            
-            // Fetch place details directly without loading indicator
-            const service = new google.maps.places.PlacesService(map);
-            service.getDetails({
-                placeId: event.placeId,
-                fields: ['name', 'formatted_address', 'rating', 'user_ratings_total', 'types', 'website']
-            }, (place, status) => {
-                if (status === google.maps.places.PlacesServiceStatus.OK && place) {
-                    // Create optimized content using template literals
-                    const content = createPOIContent(place);
-                    
-                    const poiInfoWindow = new google.maps.InfoWindow({
-                        content,
-                        position: event.latLng
-                    });
-                    
-                    poiInfoWindow._debugId = `poi-${event.placeId}`;
-                    poiInfoWindow.open(map);
-                    openInfoWindows.push(poiInfoWindow);
-                }
-                // Silently fail if place details can't be loaded
-            });
-            
-            return;
-        }
-        
-        // Handle regular map clicks (empty space)
-        if (!routeClickedRecently && !markerClickedRecently) {
-            closeAllInfoWindows();
-        }
-    });
-    
-    directionsRenderer1 = new google.maps.DirectionsRenderer({
-        map: map,
-        polylineOptions: {
-            strokeColor: '#4285f4',
-            strokeWeight: 6,
-            strokeOpacity: 0.8,
-            clickable: true,  // Make the polyline clickable
-            zIndex: 1000
-        },
-        suppressMarkers: true, // We'll create custom markers
-        preserveViewport: false
-    });
-    
-    directionsRenderer2 = new google.maps.DirectionsRenderer({
-        map: map,
-        polylineOptions: {
-            strokeColor: '#ea4335',
-            strokeWeight: 6,
-            strokeOpacity: 0.8,
-            clickable: true,  // Make the polyline clickable
-            zIndex: 1000
-        },
-        suppressMarkers: true, // We'll create custom markers
-        preserveViewport: false
-    });
-    
-    // Alternative renderers for second algorithm (route-midpoint)
-    directionsRendererAlt1 = new google.maps.DirectionsRenderer({
-        map: map,
-        polylineOptions: {
-            strokeColor: '#9c27b0', // purple
-            strokeWeight: 5,
-            strokeOpacity: 0.85,
-            clickable: true,
-            zIndex: 999
-        },
-        suppressMarkers: true,
-        preserveViewport: true
-    });
-    directionsRendererAlt2 = new google.maps.DirectionsRenderer({
-        map: map,
-        polylineOptions: {
-            strokeColor: '#0f9d58', // green
-            strokeWeight: 5,
-            strokeOpacity: 0.85,
-            clickable: true,
-            zIndex: 999
-        },
-        suppressMarkers: true,
-        preserveViewport: true
-    });
-    
-    // Backend connectivity check removed per request
-    
-    // Initialize Google Places Autocomplete
-    initializeAutocomplete();
-    
-    // Setup input field enhancements
-    setupInputFieldEnhancements();
-    
-    // Initialize location detection after maps are ready
-    initializeLocationDetection();
+const map = L.map("map", { zoomControl: false }).setView([51.5074, -0.1278], 12);
+L.control.zoom({ position: "bottomright" }).addTo(map);
+L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+  attribution:
+    '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+  maxZoom: 19,
+}).addTo(map);
+
+function pinIcon(label, color) {
+  return L.divIcon({
+    className: "",
+    html: `<div class="marker-pin" style="background:${color}"><span>${escapeHtml(label)}</span></div>`,
+    iconSize: [30, 30],
+    iconAnchor: [15, 30],
+  });
 }
 
-// Backend connectivity indicator removed per request
-
-// Clear all markers from map
-function clearMarkers() {
-    markers.forEach(marker => marker.setMap(null));
-    markers = [];
-    clearBusinessMarkers();
-    // Clear sample markers
-    sampleMarkers.forEach(m => m.setMap(null));
-    sampleMarkers = [];
+function spotIcon(rank) {
+  return L.divIcon({
+    className: "",
+    html: `<div class="marker-spot rank-${rank}">${rank}</div>`,
+    iconSize: [rank === 1 ? 34 : 26, rank === 1 ? 34 : 26],
+    iconAnchor: [rank === 1 ? 17 : 13, rank === 1 ? 17 : 13],
+  });
 }
 
-// Clear business markers specifically
-function clearBusinessMarkers() {
-    // Close and remove any business-related InfoWindows from tracking
-    const businessInfoWindows = openInfoWindows.filter(w => w._debugId && w._debugId.startsWith('business-'));
-    businessInfoWindows.forEach(infoWindow => infoWindow.close());
-    
-    // Remove business InfoWindows from the tracking array
-    openInfoWindows = openInfoWindows.filter(w => !w._debugId || !w._debugId.startsWith('business-'));
-    
-    // Clear the actual markers
-    businessMarkers.forEach(marker => marker.setMap(null));
-    businessMarkers.length = 0; // Faster array clearing
+function initials(name) {
+  return (name || "?").trim().charAt(0).toUpperCase() || "?";
 }
 
-// Clear all info windows (optimized)
-function closeAllInfoWindows() {
-    // Batch close all InfoWindows for better performance
-    for (let i = openInfoWindows.length - 1; i >= 0; i--) {
-        openInfoWindows[i].close();
-    }
-    openInfoWindows.length = 0; // Faster array clearing
-}
-
-// Make function available globally for button clicks
-window.closeAllInfoWindows = closeAllInfoWindows;
-
-// Display routes from both addresses to the meeting point
-function displayRoutesWithRenderers(address1, address2, meetingPoint, rendererA, rendererB, colorA, colorB, labelSuffix = '') {
-    console.log('displayRoutes called with:', { address1, address2, meetingPoint });
-    
-    if (!directionsService) {
-        console.error('DirectionsService not initialized');
-        return;
-    }
-    
-    if (!address1 || !address2 || !meetingPoint) {
-        console.error('Missing required parameters for displayRoutes');
-        return;
-    }
-    
-    console.log('Requesting route 1: from', address1, 'to', meetingPoint);
-    
-    // Route from address 1 to meeting point
-    directionsService.route({
-        origin: { lat: address1.lat, lng: address1.lng },
-        destination: { lat: meetingPoint.lat, lng: meetingPoint.lng },
-        travelMode: google.maps.TravelMode.TRANSIT,
-        transitOptions: {
-            departureTime: new Date()
-        }
-    }, (result, status) => {
-        console.log('Route 1 response:', status, result);
-        if (status === 'OK') {
-            rendererA.setMap(map);
-            rendererA.setDirections(result);
-            console.log('Route 1 displayed successfully');
-            
-            // Add click listener to route 1
-            setTimeout(() => {
-                try {
-                    const route = result.routes[0];
-                    addRouteClickListener(rendererA, route, `Route from Address A${labelSuffix ? ' - ' + labelSuffix : ''}`, colorA);
-                } catch (e) {
-                    console.error('Error adding click listener to route 1:', e);
-                }
-            }, 500);
-        } else {
-            console.error('Route 1 request failed', status);
-        }
-    });
-    
-    console.log('Requesting route 2: from', address2, 'to', meetingPoint);
-    
-    // Route from address 2 to meeting point  
-    directionsService.route({
-        origin: { lat: address2.lat, lng: address2.lng },
-        destination: { lat: meetingPoint.lat, lng: meetingPoint.lng },
-        travelMode: google.maps.TravelMode.TRANSIT,
-        transitOptions: {
-            departureTime: new Date()
-        }
-    }, (result, status) => {
-        console.log('Route 2 response:', status, result);
-        if (status === 'OK') {
-            rendererB.setMap(map);
-            rendererB.setDirections(result);
-            console.log('Route 2 displayed successfully');
-            
-            // Add click listener to route 2
-            setTimeout(() => {
-                try {
-                    const route = result.routes[0];
-                    addRouteClickListener(rendererB, route, `Route from Address B${labelSuffix ? ' - ' + labelSuffix : ''}`, colorB);
-                } catch (e) {
-                    console.error('Error adding click listener to route 2:', e);
-                }
-            }, 500);
-        } else {
-            console.error('Route 2 request', status);
-        }
-    });
-}
-
-// Backwards-compatible wrapper using default renderers/colors
-function displayRoutes(address1, address2, meetingPoint) {
-    return displayRoutesWithRenderers(
-        address1,
-        address2,
-        meetingPoint,
-        directionsRenderer1,
-        directionsRenderer2,
-        '#4285f4',
-        '#ea4335',
-        'Default'
-    );
-}
-
-// Add click listener to route polylines for showing instructions
-function addRouteClickListener(renderer, route, routeName, color) {
-    console.log('Adding click listener for:', routeName);
-    
-    try {
-        // Create info window for route instructions
-        const infoWindow = new google.maps.InfoWindow({
-            maxWidth: 400
-        });
-        
-        // Add unique identifier for debugging
-        infoWindow._debugId = `route-${routeName.replace(/\s+/g, '-').toLowerCase()}`;
-        
-        // Wait for the renderer to be fully initialized
-        setTimeout(() => {
-            try {
-                console.log('Creating clickable overlay for:', routeName);
-                
-                // Create a detailed route path from all the steps
-                let routePath = [];
-                
-                // Build comprehensive path from all route steps
-                route.legs.forEach((leg, legIndex) => {
-                    leg.steps.forEach((step, stepIndex) => {
-                        // Add all points from this step's path
-                        if (step.path && step.path.length > 0) {
-                            step.path.forEach(point => {
-                                routePath.push(point);
-                            });
-                        } else {
-                            // Fallback: use start and end points
-                            if (step.start_location) {
-                                routePath.push(step.start_location);
-                            }
-                            if (step.end_location) {
-                                routePath.push(step.end_location);
-                            }
-                        }
-                    });
-                });
-                
-                // If we don't have enough points, try the overview polyline
-                if (routePath.length < 10 && route.overview_polyline && route.overview_polyline.points) {
-                    try {
-                        if (typeof google.maps.geometry !== 'undefined' && typeof google.maps.geometry.encoding !== 'undefined') {
-                            const decodedPath = google.maps.geometry.encoding.decodePath(route.overview_polyline.points);
-                            routePath = decodedPath;
-                            console.log('Using decoded overview polyline with', decodedPath.length, 'points for:', routeName);
-                        }
-                    } catch (error) {
-                        console.error('Error decoding overview polyline:', error);
-                    }
-                }
-                
-                console.log('Built route path with', routePath.length, 'points for:', routeName);
-                
-                if (routePath.length === 0) {
-                    console.error('No route path found for:', routeName);
-                    return;
-                }
-                
-                // Create an invisible but clickable polyline overlay
-                const clickablePolyline = new google.maps.Polyline({
-                    path: routePath,
-                    strokeOpacity: 0, // Completely invisible
-                    strokeWeight: 20, // Wide area for easy clicking
-                    map: map,
-                    clickable: true,
-                    zIndex: 10000 // Very high z-index to ensure it's on top
-                });
-                
-                console.log('Created clickable polyline overlay for:', routeName);
-                
-                // Add click listener to the overlay polyline
-                const clickListener = google.maps.event.addListener(clickablePolyline, 'click', (event) => {
-                    console.log('🔥 Clickable overlay clicked for route:', routeName);
-                    routeClickedRecently = true; // Set flag to prevent map click
-                    setTimeout(() => { routeClickedRecently = false; }, 200); // Reset flag after delay
-                    event.stop(); // Prevent the event from bubbling to the map
-                    showRouteInstructions(infoWindow, route, routeName, color, event.latLng);
-                });
-                
-                // Add hover effects for visual feedback
-                google.maps.event.addListener(clickablePolyline, 'mouseover', () => {
-                    console.log('🖱️ Mouse over route:', routeName);
-                    clickablePolyline.setOptions({ 
-                        strokeOpacity: 0.3, 
-                        strokeColor: color,
-                        strokeWeight: 8
-                    });
-                    map.getDiv().style.cursor = 'pointer';
-                });
-                
-                google.maps.event.addListener(clickablePolyline, 'mouseout', () => {
-                    console.log('🖱️ Mouse out route:', routeName);
-                    clickablePolyline.setOptions({ 
-                        strokeOpacity: 0,
-                        strokeWeight: 20
-                    });
-                    map.getDiv().style.cursor = '';
-                });
-                
-                // Store for cleanup
-                routes.push({
-                    renderer,
-                    clickablePolyline,
-                    clickListener,
-                    infoWindow,
-                    routeName: routeName
-                });
-                
-                console.log('✅ Clickable overlay added successfully for:', routeName);
-                
-            } catch (error) {
-                console.error('Error in click listener setup:', error);
-            }
-        }, 1000); // Give more time for route to be fully rendered
-        
-    } catch (error) {
-        console.error('Error setting up route click listener:', error);
-    }
-}
-
-// Observe DOM changes to detect when DirectionsRenderer creates polylines
-function observeDirectionsPolylines(renderer, route, routeName, color, infoWindow) {
-    console.log('Starting DOM observation for polylines:', routeName);
-    
-    const mapDiv = map.getDiv();
-    if (!mapDiv) {
-        console.error('Map div not found for observation');
-        return;
-    }
-    
-    // Create a mutation observer to watch for new polylines
-    const observer = new MutationObserver((mutations) => {
-        mutations.forEach((mutation) => {
-            if (mutation.type === 'childList') {
-                mutation.addedNodes.forEach((node) => {
-                    // Look for SVG elements that might contain our polylines
-                    if (node.nodeType === Node.ELEMENT_NODE) {
-                        const paths = node.querySelectorAll ? node.querySelectorAll('path[stroke]') : [];
-                        const directPaths = node.tagName === 'path' && node.hasAttribute('stroke') ? [node] : [];
-                        const allPaths = [...paths, ...directPaths];
-                        
-                        allPaths.forEach((path) => {
-                            const stroke = path.getAttribute('stroke');
-                            const strokeRgb = path.style.stroke;
-                            
-                            // Check if this path matches our route color
-                            const isMatchingRoute = 
-                                (color === '#4285f4' && (
-                                    stroke === '#4285f4' || 
-                                    stroke === 'rgb(66, 133, 244)' ||
-                                    strokeRgb === 'rgb(66, 133, 244)' ||
-                                    strokeRgb === '#4285f4'
-                                )) ||
-                                (color === '#ea4335' && (
-                                    stroke === '#ea4335' || 
-                                    stroke === 'rgb(234, 67, 53)' ||
-                                    strokeRgb === 'rgb(234, 67, 53)' ||
-                                    strokeRgb === '#ea4335'
-                                ));
-                            
-                            if (isMatchingRoute) {
-                                console.log('🎯 Found matching polyline path for:', routeName, 'color:', stroke || strokeRgb);
-                                
-                                // Add click listener to the SVG path element
-                                path.style.cursor = 'pointer';
-                                path.addEventListener('click', (event) => {
-                                    console.log('🔥 SVG path clicked for route:', routeName);
-                                    
-                                    // Convert screen coordinates to map coordinates
-                                    const rect = mapDiv.getBoundingClientRect();
-                                    const x = event.clientX - rect.left;
-                                    const y = event.clientY - rect.top;
-                                    
-                                    // Convert pixel coordinates to lat/lng (approximate)
-                                    const bounds = map.getBounds();
-                                    const projection = map.getProjection();
-                                    
-                                    if (bounds && projection) {
-                                        const sw = bounds.getSouthWest();
-                                        const ne = bounds.getNorthEast();
-                                        const mapWidth = mapDiv.offsetWidth;
-                                        const mapHeight = mapDiv.offsetHeight;
-                                        
-                                        const lat = sw.lat() + (ne.lat() - sw.lat()) * (1 - y / mapHeight);
-                                        const lng = sw.lng() + (ne.lng() - sw.lng()) * (x / mapWidth);
-                                        
-                                        const clickPosition = new google.maps.LatLng(lat, lng);
-                                        showRouteInstructions(infoWindow, route, routeName, color, clickPosition);
-                                    }
-                                    
-                                    event.stopPropagation();
-                                });
-                                
-                                console.log('✅ Click listener added to SVG path for:', routeName);
-                            }
-                        });
-                    }
-                });
-            }
-        });
-    });
-    
-    // Start observing
-    observer.observe(mapDiv, {
-        childList: true,
-        subtree: true
-    });
-    
-    // Store observer for cleanup
-    routes.push({
-        renderer,
-        observer,
-        infoWindow,
-        routeName
-    });
-    
-    // Stop observing after a reasonable time
-    setTimeout(() => {
-        console.log('Stopping DOM observation for:', routeName);
-        observer.disconnect();
-    }, 5000);
-}
-
-// Helper function to check if a click is near a route path
-function isClickNearRoute(clickLatLng, routePath, tolerancePixels = 50) {
-    if (!routePath || routePath.length === 0) return false;
-    
-    try {
-        // Convert tolerance from pixels to degrees (rough approximation)
-        const tolerance = tolerancePixels * 0.0001; // Rough conversion
-        
-        for (let i = 0; i < routePath.length; i++) {
-            const pathPoint = routePath[i];
-            const distance = google.maps.geometry.spherical.computeDistanceBetween(clickLatLng, pathPoint);
-            // If distance is less than ~50 meters, consider it a click on the route
-            if (distance < 50) {
-                return true;
-            }
-        }
-        return false;
-    } catch (error) {
-        console.error('Error checking click near route:', error);
-        return false;
-    }
-}
-
-// Show route instructions in info window
-function showRouteInstructions(infoWindow, route, routeName, color, position) {
-    // Close any existing info windows
-    closeAllInfoWindows();
-    
-    let content = `
-        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 380px; color: #202124;">
-            <h3 style="margin: 0 0 12px 0; color: ${color}; font-size: 18px; font-weight: 600;">
-                ${routeName}
-            </h3>
-    `;
-    
-    const legs = route.legs;
-    let totalDistance = 0;
-    let totalDuration = 0;
-    let transportModes = new Set();
-    
-    // Calculate totals and collect transport modes
-    legs.forEach(leg => {
-        totalDistance += leg.distance.value;
-        totalDuration += leg.duration.value;
-        
-        leg.steps.forEach(step => {
-            if (step.transit && step.transit.line && step.transit.line.vehicle) {
-                transportModes.add(step.transit.line.vehicle.type || 'BUS');
-            } else {
-                transportModes.add(step.travel_mode || 'WALKING');
-            }
-        });
-    });
-    
-    // Create transport mode summary
-    const modeIcons = Array.from(transportModes).map(mode => transportIcons[mode] || '🚶').join(' ');
-    
-    content += `
-        <div style="background: #f8f9fa; padding: 12px; border-radius: 6px; margin-bottom: 14px; border: 1px solid #e1e3e1;">
-            <div style="font-size: 14px; color: #202124; font-weight: 600; margin-bottom: 6px;">📏 Total Distance: ${(totalDistance / 1000).toFixed(1)} km</div>
-            <div style="font-size: 14px; color: #202124; font-weight: 600; margin-bottom: 6px;">⏱️ Total Duration: ${Math.round(totalDuration / 60)} minutes</div>
-            <div style="font-size: 14px; color: #1a73e8; font-weight: 500;">🚌 Transport: ${modeIcons}</div>
-        </div>
-        <div style="max-height: 280px; overflow-y: auto; border-radius: 6px;">
-    `;
-    
-    // Add step-by-step instructions
-    legs.forEach((leg, legIndex) => {
-        if (legs.length > 1) {
-            content += `<h4 style="margin: 12px 0 6px 0; color: #1a73e8; font-size: 15px; font-weight: 600;">🚶 Leg ${legIndex + 1}</h4>`;
-        }
-        
-        leg.steps.forEach((step, stepIndex) => {
-            const enhancedStep = formatEnhancedInstruction(step);
-            const distance = step.distance.text;
-            const duration = step.duration.text;
-            
-            // Different styling for transit vs walking steps
-            const bgColor = enhancedStep.isTransit ? '#f0f7ff' : '#f8f9fa';
-            const borderColor = enhancedStep.isTransit ? color : '#e1e3e1';
-            
-            content += `
-                <div style="margin-bottom: 12px; padding: 10px; border-left: 4px solid ${borderColor}; background: ${bgColor}; border-radius: 0 6px 6px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-                    <div style="font-size: 14px; margin-bottom: 6px; color: #202124; line-height: 1.4; font-weight: 500;">
-                        ${enhancedStep.instruction}
-                    </div>
-                    ${enhancedStep.stopDetails ? `
-                        <div style="font-size: 12px; color: #1a73e8; margin-bottom: 4px; font-weight: 500;">
-                            📍 ${enhancedStep.stopDetails}
-                        </div>
-                    ` : ''}
-                    ${enhancedStep.timeDetails ? `
-                        <div style="font-size: 12px; color: #34a853; margin-bottom: 4px;">
-                            ⏰ ${enhancedStep.timeDetails}
-                        </div>
-                    ` : ''}
-                    <div style="font-size: 12px; color: #5f6368; font-weight: 500;">
-                        📏 ${distance} • ⏱️ ${duration}
-                    </div>
-                </div>
-            `;
-        });
-    });
-    
-    content += `
-        </div>
-    </div>
-    `;
-    
-    infoWindow.setContent(content);
-    infoWindow.setPosition(position);
-    infoWindow.open(map);
-    
-    // Add to openInfoWindows array for tracking
-    console.log('📋 Before adding route InfoWindow, openInfoWindows:', openInfoWindows.length);
-    console.log('📋 Route InfoWindow ID:', infoWindow._debugId);
-    openInfoWindows.push(infoWindow);
-    console.log('📋 After adding route InfoWindow, openInfoWindows:', openInfoWindows.length);
-    console.log('📋 Updated openInfoWindows IDs:', openInfoWindows.map(w => w._debugId || 'no-id'));
-    
-    console.log('Route instructions displayed for:', routeName);
-}
-
-// Clear all routes from the map
-function clearRoutes() {
-    console.log('Clearing routes...');
-    
-    // Clear directions renderers
-    if (directionsRenderer1) {
-        directionsRenderer1.setDirections({routes: []});
-        directionsRenderer1.setMap(null);
-    }
-    if (directionsRenderer2) {
-        directionsRenderer2.setDirections({routes: []});
-        directionsRenderer2.setMap(null);
-    }
-    if (directionsRendererAlt1) {
-        directionsRendererAlt1.setDirections({routes: []});
-        directionsRendererAlt1.setMap(null);
-    }
-    if (directionsRendererAlt2) {
-        directionsRendererAlt2.setDirections({routes: []});
-        directionsRendererAlt2.setMap(null);
-    }
-    
-    // Clear route click listeners and polylines
-    routes.forEach(routeInfo => {
-        if (routeInfo.clickListener) {
-            google.maps.event.removeListener(routeInfo.clickListener);
-        }
-        if (routeInfo.listener) {
-            google.maps.event.removeListener(routeInfo.listener);
-        }
-        if (routeInfo.mapListener) {
-            google.maps.event.removeListener(routeInfo.mapListener);
-        }
-        if (routeInfo.clickablePolyline) {
-            routeInfo.clickablePolyline.setMap(null);
-        }
-        if (routeInfo.polyline) {
-            routeInfo.polyline.setMap(null);
-        }
-        if (routeInfo.infoWindow) {
-            routeInfo.infoWindow.close();
-        }
-        if (routeInfo.observer) {
-            routeInfo.observer.disconnect();
-        }
-    });
-    routes = [];
-    
-    // Close all info windows
-    closeAllInfoWindows();
-    
-    console.log('Routes cleared');
-}
-
-function renderSampledPoints(samplePoints, mapRef, color='#555') {
-    if (!Array.isArray(samplePoints)) return;
-    console.log('[Sampling] Rendering', samplePoints.length, 'route sampling points');
-    // Provide quick stats for debugging
-    if (samplePoints.length > 0) {
-        const mins = samplePoints.map(p => p.max_travel_time_minutes).filter(v => typeof v === 'number');
-        if (mins.length) {
-            const min = Math.min(...mins), max = Math.max(...mins), avg = mins.reduce((a,b)=>a+b,0)/mins.length;
-            console.log(`[Sampling] Max travel time minutes range: ${min}-${max} (avg ${avg.toFixed(1)})`);
-        }
-    }
-    const markerScale = 12; // larger points
-    const markerFill = '#d50000'; // red color for visibility
-    samplePoints.forEach(pt => {
-        try {
-            if (!pt || typeof pt.lat !== 'number' || typeof pt.lng !== 'number') return;
-            // Safe formatting
-            const rf = (typeof pt.route_fraction === 'number') ? (pt.route_fraction * 100).toFixed(1) : '?';
-            const off = (typeof pt.lateral_offset_m === 'number') ? pt.lateral_offset_m : '?';
-            const maxM = (typeof pt.max_travel_time_minutes === 'number') ? pt.max_travel_time_minutes : '?';
-            const diffM = (typeof pt.time_difference_minutes === 'number') ? pt.time_difference_minutes : '?';
-
-            // Use a consistent red color and larger size for sampled points
-            const fill = markerFill;
-            const marker = new google.maps.Marker({
-                position: { lat: pt.lat, lng: pt.lng },
-                map: mapRef,
-                zIndex: 5000,
-                icon: {
-                    path: google.maps.SymbolPath.CIRCLE,
-                    scale: markerScale + 2,
-                    fillColor: fill,
-                    fillOpacity: 0.9,
-                    strokeColor: '#8e0000',
-                    strokeWeight: 1.4
-                },
-                title: `Route ${rf}% | Offset ${off}m\nMax ${maxM}m | Δ ${diffM}m`
-            });
-            sampleMarkers.push(marker);
-
-            // Supplemental: small circle overlay to guarantee visibility
-            try {
-                const circle = new google.maps.Circle({
-                    strokeColor: '#b71c1c',
-                    strokeOpacity: 0.7,
-                    strokeWeight: 1,
-                    fillColor: '#ef5350',
-                    fillOpacity: 0.35,
-                    map: mapRef,
-                    center: { lat: pt.lat, lng: pt.lng },
-                    radius: 50,
-                    zIndex: 4000
-                });
-                sampleMarkers.push(circle);
-            } catch (e) {
-                // ignore if circle fails
-            }
-        } catch (err) {
-            console.warn('[Sampling] Failed to render a sample point:', err, pt);
-        }
-    });
-
-    // Ensure viewport includes the sampled points for visibility
-    try {
-        const bounds = new google.maps.LatLngBounds();
-        samplePoints.slice(0, 200).forEach(pt => {
-            if (typeof pt.lat === 'number' && typeof pt.lng === 'number') {
-                bounds.extend(new google.maps.LatLng(pt.lat, pt.lng));
-            }
-        });
-        if (!bounds.isEmpty()) {
-            mapRef.fitBounds(bounds);
-        }
-    } catch (e) {
-        console.warn('[Sampling] Failed to fit bounds inside render:', e);
-    }
-}
-
-// Display results on map
-function displayResultsOnMap(data, options = {}) {
-    console.log('displayResultsOnMap called with data:', data);
-    const {
-    renderers = { A: directionsRenderer1, B: directionsRenderer2 },
-    colors = { A: '#4285f4', B: '#ea4335' },
-        labelSuffix = 'Default',
-        showBusinesses = true,
-    optimalColor = '#34a853'
-    } = options;
-    
-    // Validate data structure
-    if (!data) {
-        console.error('No data provided to displayResultsOnMap');
-        return;
-    }
-    
-    // Try to handle different possible data structures
-    let address1, address2, midpoint, optimal;
-    
-    if (data.address1 && data.address1.geocoded) {
-        // Expected structure
-    address1 = data.address1.geocoded;
-    address2 = data.address2.geocoded;
-    // Support both algorithms: default uses geographic_midpoint, route-midpoint uses route_midpoint
-    midpoint = data.geographic_midpoint || data.route_midpoint || null;
-    optimal = data.optimal_meeting_point;
-        console.log('Using expected data structure');
-    } else if (data.success && data.data) {
-        // Maybe data is nested differently
-        console.log('Trying nested data structure');
-        return displayResultsOnMap(data.data);
-    } else {
-        console.error('Unknown data structure:', Object.keys(data));
-        console.error('Full data:', data);
-        return;
-    }
-    
-    console.log('Addresses:', { address1, address2 });
-    console.log('Midpoint:', midpoint);
-    console.log('Optimal:', optimal);
-    
-    if (!address1 || !address2) {
-        console.error('Invalid geocoded addresses:', { address1, address2 });
-        return;
-    }
-    
-    // Center map:
-    // - If this is the Route Midpoint overlay and route_midpoint exists, center there.
-    // - Else prefer optimal; if none, center on Address 1, else average of inputs; midpoint as last resort.
-    const isRouteOverlay = (labelSuffix && /route/i.test(labelSuffix));
-    const routeMidpoint = (data && data.route_midpoint && typeof data.route_midpoint.lat === 'number' && typeof data.route_midpoint.lng === 'number')
-        ? { lat: data.route_midpoint.lat, lng: data.route_midpoint.lng }
-        : null;
-    let center;
-    if (isRouteOverlay && routeMidpoint) {
-        center = routeMidpoint;
-    } else if (optimal && typeof optimal.lat === 'number' && typeof optimal.lng === 'number') {
-        center = { lat: optimal.lat, lng: optimal.lng };
-    } else if (address1 && typeof address1.lat === 'number' && typeof address1.lng === 'number') {
-        center = { lat: address1.lat, lng: address1.lng };
-    } else if (address1 && address2) {
-        center = { lat: (address1.lat + address2.lat) / 2, lng: (address1.lng + address2.lng) / 2 };
-    } else if (midpoint && typeof midpoint.lat === 'number' && typeof midpoint.lng === 'number') {
-        center = { lat: midpoint.lat, lng: midpoint.lng };
-    } else {
-        center = map.getCenter();
-    }
-    map.setCenter(center);
-    map.setZoom(14);
-    
-    // Clear any existing markers
-    // Note: In a production app, you'd want to store and clear previous markers
-    
-    // Add markers for start points
-    const marker1 = new google.maps.Marker({
-        position: { lat: address1.lat, lng: address1.lng },
-        map: map,
-        title: `Address 1: ${address1.formatted_address}`,
-        icon: {
-            url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
-                <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">
-                    <circle cx="20" cy="20" r="18" fill="#4285f4" stroke="white" stroke-width="3"/>
-                    <text x="20" y="26" text-anchor="middle" fill="white" font-family="Arial" font-size="16" font-weight="bold">A</text>
-                </svg>
-            `),
-            scaledSize: new google.maps.Size(40, 40)
-        }
-    });
-    markers.push(marker1);
-    
-    const marker2 = new google.maps.Marker({
-        position: { lat: address2.lat, lng: address2.lng },
-        map: map,
-        title: `Address 2: ${address2.formatted_address}`,
-        icon: {
-            url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
-                <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">
-                    <circle cx="20" cy="20" r="18" fill="#ea4335" stroke="white" stroke-width="3"/>
-                    <text x="20" y="26" text-anchor="middle" fill="white" font-family="Arial" font-size="16" font-weight="bold">B</text>
-                </svg>
-            `),
-            scaledSize: new google.maps.Size(40, 40)
-        }
-    });
-    markers.push(marker2);
-    
-    // Add marker for optimal meeting point
-    if (optimal) {
-        const optimalMarker = new google.maps.Marker({
-            position: { lat: optimal.lat, lng: optimal.lng },
-            map: map,
-            title: `Optimal Meeting Point (${labelSuffix}): ${optimal.name}`,
-            icon: {
-                url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
-                    <svg xmlns="http://www.w3.org/2000/svg" width="50" height="50" viewBox="0 0 50 50">
-                        <circle cx="25" cy="25" r="22" fill="${optimalColor}" stroke="white" stroke-width="4"/>
-                        <text x="25" y="31" text-anchor="middle" fill="white" font-family="Arial" font-size="20" font-weight="bold">★</text>
-                    </svg>
-                `),
-                scaledSize: new google.maps.Size(50, 50)
-            }
-        });
-        markers.push(optimalMarker);
-        
-        // Display routes from both addresses to the optimal meeting point
-        displayRoutesWithRenderers(address1, address2, optimal, renderers.A, renderers.B, colors.A, colors.B, labelSuffix);
-
-    // Previously: drew a separate A↔B fastest route polyline. Removed per request.
-        
-        // Add info window for optimal point
-        const meetingPointInfoWindow = new google.maps.InfoWindow({
-            content: `
-                <div style="padding: 12px; max-width: 280px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
-                    <h4 style="margin: 0 0 10px 0; color: #34a853; font-size: 17px; font-weight: 600;">🎯 ${optimal.name}</h4>
-                    <p style="margin: 0 0 6px 0; font-size: 14px; color: #202124; line-height: 1.4;"><strong style="color: #34a853;">📍 Address:</strong> ${optimal.formatted_address}</p>
-                    ${optimal.rating ? `<p style="margin: 0 0 6px 0; font-size: 14px; color: #202124;"><strong style="color: #34a853;">⭐ Rating:</strong> ${optimal.rating}/5</p>` : ''}
-                    <p style="margin: 0 0 6px 0; font-size: 14px; color: #202124;"><strong style="color: #34a853;">🚇 From A:</strong> ${Math.round(optimal.time_from_address1/60)} min</p>
-                    <p style="margin: 0 0 6px 0; font-size: 14px; color: #202124;"><strong style="color: #34a853;">🚇 From B:</strong> ${Math.round(optimal.time_from_address2/60)} min</p>
-                    <p style="margin: 0; font-size: 14px; color: #202124;"><strong style="color: #34a853;">⚖️ Difference:</strong> ${optimal.time_difference_minutes} min</p>
-                </div>
-            `
-        });
-        
-        // Add unique identifier for debugging
-        meetingPointInfoWindow._debugId = `meeting-point-${optimal.name}`;
-        
-        optimalMarker.addListener('click', (event) => {
-            event.stop(); // Stop event propagation to map
-            markerClickedRecently = true;
-            setTimeout(() => { markerClickedRecently = false; }, 200);
-            
-            closeAllInfoWindows();
-            meetingPointInfoWindow.open(map, optimalMarker);
-            openInfoWindows.push(meetingPointInfoWindow);
-        });
-
-            // Render route sampling points if provided (robust path)
-            try {
-                const samples = data.route_sampling_points;
-                const allowSamples = (typeof window.SHOW_ROUTE_SAMPLES === 'undefined' ? true : !!window.SHOW_ROUTE_SAMPLES) && (options.showSamples !== false);
-                if (Array.isArray(samples) && allowSamples) {
-                    if (samples.length > 0) {
-                        if (sampleMarkers.length === 0) {
-                            console.log('[Sampling] (displayResultsOnMap) Rendering', samples.length, 'samples');
-                            renderSampledPoints(samples, map, '#7b1fa2');
-                        } else {
-                            console.log('[Sampling] (displayResultsOnMap) Samples already rendered; skipping');
-                        }
-                    } else {
-                        console.warn('[Sampling] (displayResultsOnMap) Empty samples; trying polyline fallback');
-                        const poly = data.route && data.route.overview_polyline;
-                        const pts = decodePolyline(poly);
-                        if (allowSamples && pts && pts.length && sampleMarkers.length === 0) {
-                            const step = Math.max(1, Math.floor(pts.length / 40));
-                            const fallbackSamples = pts.filter((_, i) => i % step === 0);
-                            renderSampledPoints(fallbackSamples.map(p => ({ lat: p.lat, lng: p.lng })), map, '#d50000');
-                        }
-                    }
-                } else if (!allowSamples) {
-                    console.log('[Sampling] (displayResultsOnMap) Skipped by config');
-                }
-            } catch (e) {
-                console.warn('[Sampling] (displayResultsOnMap) Failed to render samples:', e);
-            }
-    } else if (midpoint && typeof midpoint.lat === 'number' && typeof midpoint.lng === 'number') {
-        // Requested behavior: skip midpoint fallback routing; center on Address 1 instead
-        console.log('[Fallback] No optimal meeting point; centering on Address 1 and skipping midpoint routing.');
-        try {
-            if (address1 && typeof address1.lat === 'number' && typeof address1.lng === 'number') {
-                map.setCenter({ lat: address1.lat, lng: address1.lng });
-            }
-        } catch (e) {
-            console.warn('Failed to re-center on Address 1:', e);
-        }
-    }
-    
-    // Display businesses within walking circles (only for primary/default to avoid clutter)
-    if (showBusinesses) {
-        displayBusinesses(categorizedBusinesses);
-    }
-}
-
-
-
-// Update route information
-function updateRouteInfo(elementId, routeData) {
-    const existingElement = document.getElementById(elementId);
-    if (existingElement) {
-        existingElement.remove();
-    }
-    
-    const routeInfo = document.createElement('div');
-    routeInfo.id = elementId;
-    routeInfo.className = 'route-info';
-    routeInfo.innerHTML = `
-        <strong>📍 From:</strong> ${routeData.from.substring(0, 40)}...<br>
-        <strong>🎯 To:</strong> ${routeData.to}<br>
-        <strong>⏱️ Duration:</strong> ${routeData.duration}<br>
-        <strong>📏 Distance:</strong> ${routeData.distance}<br>
-        <strong>🚇 Transit Steps:</strong> ${routeData.steps}
-    `;
-    
-    document.getElementById('results').appendChild(routeInfo);
-}
-
-// Extract detailed transit information from a step
-function getTransitDetails(step) {
-    if (!step.transit) {
-        // Non-transit step (walking, etc.)
-        const travelMode = step.travel_mode || 'WALKING';
-        return {
-            icon: transportIcons[travelMode] || '🚶',
-            details: '',
-            shortName: '',
-            headsign: '',
-            agencyName: '',
-            vehicleType: travelMode
-        };
-    }
-    
-    const transit = step.transit;
-    const line = transit.line;
-    const vehicle = line.vehicle;
-    
-    // Get vehicle type and icon
-    const vehicleType = vehicle.type || 'BUS';
-    const icon = transportIcons[vehicleType] || transportIcons['OTHER'];
-    
-    // Get line details
-    const shortName = line.short_name || line.name || '';
-    const longName = line.name || '';
-    const agencyName = line.agencies && line.agencies[0] ? line.agencies[0].name : '';
-    const headsign = transit.headsign || '';
-    
-    // Get stops
-    const departureStop = transit.departure_stop ? transit.departure_stop.name : '';
-    const arrivalStop = transit.arrival_stop ? transit.arrival_stop.name : '';
-    
-    // Build detailed description
-    let details = '';
-    if (shortName) {
-        details += `${shortName}`;
-        if (longName && longName !== shortName) {
-            details += ` (${longName})`;
-        }
-    } else if (longName) {
-        details += longName;
-    }
-    
-    if (headsign) {
-        details += ` towards ${headsign}`;
-    }
-    
-    if (agencyName && !details.includes(agencyName)) {
-        details += ` - ${agencyName}`;
-    }
-    
-    return {
-        icon,
-        details,
-        shortName,
-        headsign,
-        agencyName,
-        vehicleType,
-        departureStop,
-        arrivalStop,
-        departureTime: transit.departure_time ? transit.departure_time.text : '',
-        arrivalTime: transit.arrival_time ? transit.arrival_time.text : '',
-        numStops: transit.num_stops || 0
-    };
-}
-
-// Format enhanced step instruction with transit details
-function formatEnhancedInstruction(step) {
-    const transitDetails = getTransitDetails(step);
-    const baseInstruction = step.instructions.replace(/<[^>]*>/g, ''); // Remove HTML tags
-    
-    if (!step.transit) {
-        // Walking or other non-transit steps
-        return {
-            icon: transitDetails.icon,
-            instruction: baseInstruction,
-            details: '',
-            isTransit: false
-        };
-    }
-    
-    // Transit step - enhance with detailed information
-    let enhancedInstruction = `${transitDetails.icon} `;
-    
-    if (transitDetails.details) {
-        enhancedInstruction += `Take ${transitDetails.details}`;
-    } else {
-        enhancedInstruction += baseInstruction;
-    }
-    
-    // Add stop information
-    let stopDetails = '';
-    if (transitDetails.departureStop && transitDetails.arrivalStop) {
-        stopDetails += `From: ${transitDetails.departureStop} → To: ${transitDetails.arrivalStop}`;
-        if (transitDetails.numStops > 0) {
-            stopDetails += ` (${transitDetails.numStops} stops)`;
-        }
-    }
-    
-    // Add timing information
-    let timeDetails = '';
-    if (transitDetails.departureTime && transitDetails.arrivalTime) {
-        timeDetails = `Depart: ${transitDetails.departureTime} → Arrive: ${transitDetails.arrivalTime}`;
-    }
-    
-    return {
-        icon: transitDetails.icon,
-        instruction: enhancedInstruction,
-        stopDetails,
-        timeDetails,
-        isTransit: true,
-        vehicleType: transitDetails.vehicleType
-    };
-}
-
-// Display businesses on the map
-function displayBusinesses(businesses) {
-    clearBusinessMarkers();
-    
-    if (!businesses) return;
-    
-    Object.entries(businesses).forEach(([category, places]) => {
-        const icon = businessIcons[category] || '📍';
-        const isVisible = isBusinessCategoryVisible(category);
-        
-        if (!isVisible) return;
-        
-        places.forEach((place, index) => {
-            if (place.lat && place.lng) {
-                const marker = new google.maps.Marker({
-                    position: { lat: place.lat, lng: place.lng },
-                    map: map,
-                    title: `${place.name} (${category})`,
-                    icon: {
-                        url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
-                            <svg xmlns="http://www.w3.org/2000/svg" width="25" height="25" viewBox="0 0 25 25">
-                                <circle cx="12.5" cy="12.5" r="10" fill="#667eea" stroke="white" stroke-width="2"/>
-                                <text x="12.5" y="16" text-anchor="middle" fill="white" font-family="Arial" font-size="8">${icon}</text>
-                            </svg>
-                        `),
-                        scaledSize: new google.maps.Size(25, 25)
-                    }
-                });
-                
-                businessMarkers.push(marker);
-                
-                const businessInfoWindow = new google.maps.InfoWindow({
-                    content: `
-                        <div style="padding: 12px; max-width: 220px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
-                            <h5 style="margin: 0 0 8px 0; color: #667eea; font-size: 16px; font-weight: 600;">${icon} ${place.name}</h5>
-                            <p style="margin: 0 0 6px 0; font-size: 13px; color: #202124;"><strong style="color: #667eea;">📂 Category:</strong> ${category.replace('_', ' ')}</p>
-                            <p style="margin: 0 0 6px 0; font-size: 13px; color: #202124; line-height: 1.4;"><strong style="color: #667eea;">📍 Address:</strong> ${place.formatted_address || place.vicinity || 'N/A'}</p>
-                            ${place.rating ? `<p style="margin: 0 0 6px 0; font-size: 13px; color: #202124;"><strong style="color: #667eea;">⭐ Rating:</strong> ${place.rating}/5 ⭐</p>` : ''}
-                            ${place.price_level ? `<p style="margin: 0; font-size: 13px; color: #202124;"><strong style="color: #667eea;">💰 Price:</strong> ${'$'.repeat(place.price_level)}</p>` : ''}
-                        </div>
-                    `
-                });
-                
-                // Add unique identifier for debugging
-                businessInfoWindow._debugId = `business-${category}-${place.name}`;
-                
-                marker.addListener('click', (event) => {
-                    event.stop(); // Stop event propagation to map
-                    markerClickedRecently = true;
-                    setTimeout(() => { markerClickedRecently = false; }, 200);
-                    
-                    closeAllInfoWindows();
-                    businessInfoWindow.open(map, marker);
-                    openInfoWindows.push(businessInfoWindow);
-                });
-            }
-        });
-    });
-    
-    updateBusinessCount();
-}
-
-// Check if a business category is currently visible based on filters
-function isBusinessCategoryVisible(category) {
-    const checkbox = document.querySelector(`input[value="${category}"]`);
-    return checkbox ? checkbox.checked : true;
-}
-
-// Update business count display
-function updateBusinessCount() {
-    const totalBusinesses = businessMarkers.length;
-    const countElement = document.querySelector('.business-count');
-    if (countElement) {
-        countElement.textContent = `Showing ${totalBusinesses} businesses`;
-    }
-}
-
-// Simple HTML-escape for string injection
-function safeText(s) {
-    try {
-        return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
-    } catch (_) {
-        return '';
-    }
-}
-
-// Build HTML for a route's steps using existing formatting
-function buildInstructionsHtml(route, title, color) {
-    if (!route) return `<div style="padding:12px; color:#b00020;">No route available.</div>`;
-    let html = `
-        <div style="padding:12px;">
-            <h4 style="margin:0 0 10px; color:${color};">${title}</h4>
-    `;
-    try {
-        const legs = route.legs || [];
-        legs.forEach((leg, legIndex) => {
-            if (legs.length > 1) {
-                html += `<div style="margin:8px 0; font-weight:600; color:${color}">Leg ${legIndex+1}</div>`;
-            }
-            (leg.steps || []).forEach(step => {
-                const enhanced = formatEnhancedInstruction(step);
-                const distance = step.distance && step.distance.text || '';
-                const duration = step.duration && step.duration.text || '';
-                const bg = enhanced.isTransit ? '#f0f7ff' : '#f8f9fa';
-                const border = enhanced.isTransit ? color : '#e1e3e1';
-                html += `
-                    <div style="margin-bottom:10px; padding:10px; border-left:4px solid ${border}; background:${bg}; border-radius:0 6px 6px 0;">
-                        <div style="font-size:13px; font-weight:500; color:#202124;">${enhanced.instruction}</div>
-                        ${enhanced.stopDetails ? `<div style=\"font-size:12px; color:#1a73e8;\">📍 ${enhanced.stopDetails}</div>` : ''}
-                        ${enhanced.timeDetails ? `<div style=\"font-size:12px; color:#34a853;\">⏰ ${enhanced.timeDetails}</div>` : ''}
-                        <div style="font-size:12px; color:#5f6368;">📏 ${distance} • ⏱️ ${duration}</div>
-                    </div>
-                `;
-            });
-        });
-    } catch (e) {
-        html += `<div style="color:#b00020;">Failed to build instructions.</div>`;
-    }
-    html += `</div>`;
-    return html;
-}
-
-// Show a side-by-side panel of A/B routes for a given algorithm set
-function showSideBySideInstructions(kind) {
-    // Determine which renderers to use
-    const isDefault = (kind === 'default');
-    const renA = isDefault ? directionsRenderer1 : directionsRendererAlt1;
-    const renB = isDefault ? directionsRenderer2 : directionsRendererAlt2;
-    const dirA = renA && renA.getDirections && renA.getDirections();
-    const dirB = renB && renB.getDirections && renB.getDirections();
-    const routeA = dirA && dirA.routes && dirA.routes[0];
-    const routeB = dirB && dirB.routes && dirB.routes[0];
-
-    // Close any existing modal first
-    const oldOverlay = document.getElementById('route-side-by-side-overlay');
-    if (oldOverlay) oldOverlay.remove();
-
-    // Create backdrop overlay
-    const overlay = document.createElement('div');
-    overlay.id = 'route-side-by-side-overlay';
-    overlay.setAttribute('role', 'dialog');
-    overlay.setAttribute('aria-modal', 'true');
-    overlay.style.position = 'fixed';
-    overlay.style.inset = '0';
-    overlay.style.background = 'rgba(0,0,0,0.4)';
-    overlay.style.display = 'flex';
-    overlay.style.alignItems = 'center';
-    overlay.style.justifyContent = 'center';
-    overlay.style.zIndex = '99999';
-
-    // Prevent background scroll
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-
-    // Modal container
-    const modal = document.createElement('div');
-    modal.style.background = 'white';
-    modal.style.borderRadius = '10px';
-    modal.style.boxShadow = '0 10px 30px rgba(0,0,0,0.2)';
-    modal.style.width = 'min(1000px, 92vw)';
-    modal.style.maxHeight = '86vh';
-    modal.style.display = 'flex';
-    modal.style.flexDirection = 'column';
-    modal.style.overflow = 'hidden';
-
-    const header = document.createElement('div');
-    header.style.display = 'flex';
-    header.style.justifyContent = 'space-between';
-    header.style.alignItems = 'center';
-    header.style.padding = '12px 16px';
-    header.style.background = '#f8f9fa';
-    header.style.borderBottom = '1px solid #e1e3e1';
-    header.innerHTML = `
-        <div style="font-weight:600; font-size:16px;">🧭 ${isDefault ? 'Default' : 'Route Midpoint'} — Side-by-side routes</div>
-        <button id="close-side-by-side" style="border:1px solid #dadce0; background:white; border-radius:6px; padding:6px 10px; cursor:pointer;">Close</button>
-    `;
-
-    const content = document.createElement('div');
-    content.style.display = 'grid';
-    content.style.gridTemplateColumns = '1fr 1fr';
-    content.style.gap = '0';
-    content.style.overflow = 'auto';
-    content.style.padding = '8px';
-
-    const left = document.createElement('div');
-    left.style.borderRight = '1px solid #e1e3e1';
-    left.style.paddingRight = '8px';
-    const startATitle = routeA && routeA.legs && routeA.legs[0] && routeA.legs[0].start_address
-        ? safeText(routeA.legs[0].start_address)
-        : 'From A';
-    left.innerHTML = buildInstructionsHtml(routeA, startATitle, isDefault ? '#4285f4' : '#9c27b0');
-
-    const right = document.createElement('div');
-    right.style.paddingLeft = '8px';
-    const startBTitle = routeB && routeB.legs && routeB.legs[0] && routeB.legs[0].start_address
-        ? safeText(routeB.legs[0].start_address)
-        : 'From B';
-    right.innerHTML = buildInstructionsHtml(routeB, startBTitle, isDefault ? '#ea4335' : '#0f9d58');
-
-    content.appendChild(left);
-    content.appendChild(right);
-
-    modal.appendChild(header);
-    modal.appendChild(content);
-    overlay.appendChild(modal);
-    document.body.appendChild(overlay);
-
-    const close = () => {
-        overlay.remove();
-        document.body.style.overflow = prevOverflow || '';
-        if (lastActive) {
-            try { lastActive.focus(); } catch (_) {}
-        }
-        window.removeEventListener('keydown', onKeydown);
-    };
-
-    // Close handlers
-    const closeBtn = document.getElementById('close-side-by-side');
-    closeBtn.addEventListener('click', close);
-    overlay.addEventListener('click', (e) => {
-        // Only close on backdrop click (not inner modal clicks)
-        if (e.target === overlay) close();
-    });
-
-    const onKeydown = (e) => { if (e.key === 'Escape') close(); };
-    window.addEventListener('keydown', onKeydown);
-
-    // Focus management
-    const lastActive = document.activeElement;
-    setTimeout(() => { try { closeBtn.focus(); } catch (_) {} }, 0);
-}
-
-function attachRouteCardClickHandlers(resultsDiv) {
-    try {
-        const items = resultsDiv.querySelectorAll('.result-item[data-card-kind]');
-        items.forEach(el => {
-            const kind = el.getAttribute('data-card-kind');
-            el.addEventListener('click', () => showSideBySideInstructions(kind));
-            el.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    showSideBySideInstructions(kind);
-                }
-            });
-        });
-    } catch (e) {
-        console.warn('Failed to attach card handlers', e);
-    }
-}
-
-// Apply filters function called by the Apply Filters button
-function applyFilters() {
-    if (categorizedBusinesses) {
-        displayBusinesses(categorizedBusinesses);
-    }
-}
-
-// Form submission
-document.getElementById('searchForm').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    
-    const address1 = document.getElementById('address1').value.trim();
-    const address2 = document.getElementById('address2').value.trim();
-    
-    console.log('=== FRONTEND: Form submitted ===');
-    console.log('Address 1:', address1);
-    console.log('Address 2:', address2);
-    
-    if (!address1 || !address2) {
-        console.log('ERROR: Missing addresses');
-        alert('Please enter both addresses');
-        return;
-    }
-    
-    const resultsDiv = document.getElementById('results');
-    const searchBtn = document.getElementById('searchBtn');
-    
-    // Show loading state
-    resultsDiv.innerHTML = '';
-    searchBtn.disabled = true;
-    searchBtn.textContent = '🔍 Analyzing...';
-    // Show global overlay spinner and allow a frame to paint
-    try {
-        let overlay = document.getElementById('global-loading-overlay');
-        if (!overlay) {
-            // Create overlay dynamically if not present
-            overlay = document.createElement('div');
-            overlay.id = 'global-loading-overlay';
-            overlay.setAttribute('role', 'dialog');
-            overlay.setAttribute('aria-modal', 'true');
-            overlay.innerHTML = '<div class="loading-modal"><div class="spinner-wrap"><div class="spinner-ring"></div></div><div class="loading-text">Finding the optimal meeting point…</div></div>';
-            document.body.appendChild(overlay);
-        }
-        // Apply essential inline styles to guarantee visibility even if CSS is stale
-        overlay.style.position = 'fixed';
-        overlay.style.top = '0';
-        overlay.style.left = '0';
-        overlay.style.right = '0';
-        overlay.style.bottom = '0';
-        overlay.style.background = 'rgba(0,0,0,0.45)';
-        overlay.style.display = 'flex';
-        overlay.style.alignItems = 'center';
-        overlay.style.justifyContent = 'center';
-        overlay.style.zIndex = '100000';
-        overlay.setAttribute('aria-hidden', 'false');
-        document.body.style.overflow = 'hidden';
-        // Inline fallback styles for spinner if stylesheet not applied
-        const wrap = overlay.querySelector('.spinner-wrap');
-        if (wrap) {
-            wrap.style.width = '64px';
-            wrap.style.height = '64px';
-            wrap.style.position = 'relative';
-            wrap.style.margin = '0 auto 12px';
-        }
-        const ring = overlay.querySelector('.spinner-ring');
-        if (ring) {
-            ring.style.position = 'absolute';
-            ring.style.top = '0';
-            ring.style.left = '0';
-            ring.style.right = '0';
-            ring.style.bottom = '0';
-            ring.style.borderRadius = '50%';
-            ring.style.border = '6px solid rgba(255,255,255,0.12)';
-            ring.style.borderTopColor = '#7b9cff';
-            ring.style.animation = 'globalSpin 1.1s linear infinite';
-        }
-        // Inject keyframes if needed
-        if (!document.getElementById('global-loading-keyframes')) {
-            const style = document.createElement('style');
-            style.id = 'global-loading-keyframes';
-            style.textContent = '@keyframes globalSpin { to { transform: rotate(360deg); } }';
-            document.head.appendChild(style);
-        }
-        // Let browser paint before heavy work
-        await new Promise(r => requestAnimationFrame(() => r()));
-    } catch (_) {}
-    
-    // Clear previous results
-    clearMarkers();
-    clearRoutes();
-    closeAllInfoWindows();
-    clearRoutes();
-    
-    const requestData = {
-        address1: address1,
-        address2: address2,
-        search_radius: 2000
-    };
-    
-    console.log('Request data:', requestData);
-    console.log('API URL:', `${API_BASE}/api/find-middle-point`);
-    
-    try {
-        console.log('Sending requests for both algorithms in parallel...');
-        const [respDefault, respRoute] = await Promise.all([
-            fetch(`${API_BASE}/api/find-middle-point`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(requestData)
-            }),
-            fetch(`${API_BASE}/api/find-middle-point`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ...requestData, algorithm: 'route-midpoint' })
-            })
-        ]);
-
-        const [resDefault, resRoute] = await Promise.all([
-            respDefault.json().catch(() => null),
-            respRoute.json().catch(() => null)
-        ]);
-
-        const okDefault = respDefault.ok && resDefault && resDefault.success && resDefault.data;
-        const okRoute = respRoute.ok && resRoute && resRoute.success && resRoute.data;
-
-        // Only show a single error when both algorithms fail; no map overlays.
-        if (!okDefault && !okRoute) {
-            resultsDiv.innerHTML = `
-                <div class="error">❌ Error: ${
-                    (resDefault && resDefault.error) || (resRoute && resRoute.error) || 'Both algorithms failed'
-                }</div>`;
-            return;
-        }
-
-        // Render default first (blue/red), with businesses
-        if (okDefault) {
-            currentData = resDefault.data; // keep latest
-            setTimeout(() => {
-                displayResultsOnMap(resDefault.data, {
-                    renderers: { A: directionsRenderer1, B: directionsRenderer2 },
-                    colors: { A: '#4285f4', B: '#ea4335' },
-                    labelSuffix: 'Default',
-                    showBusinesses: true,
-                    optimalColor: '#34a853',
-                    showSamples: (typeof window.SHOW_ROUTE_SAMPLES === 'undefined' ? true : !!window.SHOW_ROUTE_SAMPLES)
-                });
-            }, 50);
-        }
-
-        // Then overlay route-midpoint (purple/green), without duplicating businesses
-        if (okRoute) {
-            setTimeout(() => {
-                // Skip overlay entirely if the route algorithm didn't produce a polyline or samples
-                const polyline = resRoute.data.route && resRoute.data.route.overview_polyline;
-                const hasSamples = Array.isArray(resRoute.data.route_sampling_points) && resRoute.data.route_sampling_points.length > 0;
-                if (!polyline && !hasSamples) {
-                    console.log('[Route overlay] No polyline or samples; skipping overlay rendering.');
-                    return;
-                }
-                displayResultsOnMap(resRoute.data, {
-                    renderers: { A: directionsRendererAlt1, B: directionsRendererAlt2 },
-                    colors: { A: '#9c27b0', B: '#0f9d58' },
-                    labelSuffix: 'Route Midpoint',
-                    showBusinesses: false,
-                    optimalColor: '#fbbc05',
-                    showSamples: (typeof window.SHOW_ROUTE_SAMPLES === 'undefined' ? true : !!window.SHOW_ROUTE_SAMPLES)
-                });
-                // Render sampled points from route algorithm (honor global config)
-                const allowSamples = (typeof window.SHOW_ROUTE_SAMPLES === 'undefined' ? true : !!window.SHOW_ROUTE_SAMPLES);
-                if (allowSamples && sampleMarkers.length === 0) {
-                    if (resRoute.data.route_sampling_points) {
-                        if (!resRoute.data.route_sampling_points.length) {
-                            console.warn('[Sampling] route_sampling_points empty in API response');
-                            // Fallback: generate sparse samples from overview polyline
-                            try {
-                                const poly = resRoute.data.route && resRoute.data.route.overview_polyline;
-                                if (!poly) return; // no polyline to sample from
-                                const pts = decodePolyline(poly);
-                                if (pts && pts.length) {
-                                    const step = Math.max(1, Math.floor(pts.length / 40));
-                                    const fallbackSamples = pts.filter((_, i) => i % step === 0);
-                                    renderSampledPoints(fallbackSamples.map(p => ({ lat: p.lat, lng: p.lng })), map, '#d50000');
-                                }
-                            } catch (e) {
-                                console.warn('[Sampling] Fallback sampling failed:', e);
-                            }
-                        } else {
-                            console.log('[Sampling] Received', resRoute.data.route_sampling_points.length, 'sampling points from backend');
-                            console.log('[Sampling] First sample point example:', resRoute.data.route_sampling_points[0]);
-                            renderSampledPoints(resRoute.data.route_sampling_points, map, '#7b1fa2');
-                            // Auto-fit bounds to include addresses and sampling points once (helps if markers off-screen)
-                            try {
-                                const bounds = new google.maps.LatLngBounds();
-                                if (resRoute.data.address1 && resRoute.data.address1.geocoded)
-                                    bounds.extend(new google.maps.LatLng(resRoute.data.address1.geocoded.lat, resRoute.data.address1.geocoded.lng));
-                                if (resRoute.data.address2 && resRoute.data.address2.geocoded)
-                                    bounds.extend(new google.maps.LatLng(resRoute.data.address2.geocoded.lat, resRoute.data.address2.geocoded.lng));
-                                resRoute.data.route_sampling_points.slice(0, 200).forEach(pt => {
-                                    if (typeof pt.lat === 'number' && typeof pt.lng === 'number') {
-                                        bounds.extend(new google.maps.LatLng(pt.lat, pt.lng));
-                                    }
-                                });
-                                map.fitBounds(bounds);
-                            } catch (e) {
-                                console.warn('[Sampling] Failed to fit bounds:', e);
-                            }
-                        }
-                    } else {
-                        console.warn('[Sampling] route_sampling_points key missing in response');
-                        // Fallback: decode route overview polyline and render sparse points
-                        try {
-                            const poly = resRoute.data.route && resRoute.data.route.overview_polyline;
-                            if (!poly) return; // no polyline to sample from
-                            const pts = decodePolyline(poly);
-                            if (pts && pts.length) {
-                                const step = Math.max(1, Math.floor(pts.length / 40));
-                                const fallbackSamples = pts.filter((_, i) => i % step === 0);
-                                renderSampledPoints(fallbackSamples.map(p => ({ lat: p.lat, lng: p.lng })), map, '#d50000');
-                            }
-                        } catch (e) {
-                            console.warn('[Sampling] Polyline fallback failed:', e);
-                        }
-                    }
-                } else if (!allowSamples) {
-                    console.log('[Sampling] Skipped overlay sampling by config');
-                }
-                // Finally, center on the route midpoint if present (may override DirectionsRenderer/fitBounds changes)
-                try {
-                    const rm = resRoute && resRoute.data && resRoute.data.route_midpoint;
-                    if (rm && typeof rm.lat === 'number' && typeof rm.lng === 'number') {
-                        const target = { lat: rm.lat, lng: rm.lng };
-                        // use a couple of delays to win against late viewport changes
-                        setTimeout(() => { try { map.setCenter(target); } catch (_) {} }, 300);
-                        setTimeout(() => { try { map.setCenter(target); } catch (_) {} }, 1200);
-                    }
-                } catch (e) {
-                    console.warn('Failed to center on route_midpoint:', e);
-                }
-            }, 100);
-        }
-
-        // Update results panel summary for both
-        const summaries = [];
-    if (okDefault && resDefault.data.optimal_meeting_point) {
-            const mp = resDefault.data.optimal_meeting_point;
-            summaries.push(`
-        <div class="result-item" data-card-kind="default" role="button" tabindex="0" style="cursor:pointer;">
-                    <h4>🎯 Optimal (Default)</h4>
-                    <strong>${mp.name}</strong><br>
-                    📍 ${mp.formatted_address}<br>
-                    ${mp.rating ? `⭐ ${mp.rating}/5<br>` : ''}
-                    🚇 Travel times: ${Math.round(mp.time_from_address1/60)}min / ${Math.round(mp.time_from_address2/60)}min<br>
-                    ⚖️ Difference: ${mp.time_difference_minutes} minutes
-                </div>
-            `);
-        }
-    if (okRoute && resRoute.data.optimal_meeting_point) {
-            const mp2 = resRoute.data.optimal_meeting_point;
-            summaries.push(`
-        <div class="result-item" data-card-kind="route" role="button" tabindex="0" style="cursor:pointer;">
-                    <h4>🎯 Optimal (Route Midpoint)</h4>
-                    <strong>${mp2.name}</strong><br>
-                    📍 ${mp2.formatted_address}<br>
-                    ${mp2.rating ? `⭐ ${mp2.rating}/5<br>` : ''}
-                    🚇 Travel times: ${Math.round(mp2.time_from_address1/60)}min / ${Math.round(mp2.time_from_address2/60)}min<br>
-                    ⚖️ Difference: ${mp2.time_difference_minutes} minutes
-                </div>
-            `);
-        }
-        // If route algorithm returned minimax metrics but no optimal place, still show a card for its point
-        if (okRoute && !resRoute.data.optimal_meeting_point && resRoute.data.route_minimax_metrics && resRoute.data.route_midpoint) {
-            const mm = resRoute.data.route_minimax_metrics;
-            const pt = resRoute.data.route_midpoint;
-            summaries.push(`
-                <div class="result-item">
-                    <h4>🎯 Minimax Point (Route)</h4>
-                    <strong>Transit Route Point</strong><br>
-                    📍 (${pt.lat.toFixed(5)}, ${pt.lng.toFixed(5)})<br>
-                    🚇 Max travel time: ${mm.max_travel_time_minutes || (mm.max_travel_time_seconds ? Math.round(mm.max_travel_time_seconds/60) : '?')} min<br>
-                    ⚖️ Difference: ${mm.time_difference_minutes || (mm.time_difference_seconds ? Math.round(mm.time_difference_seconds/60) : '?')} min
-                </div>
-            `);
-        }
-        if (summaries.length > 0) {
-            resultsDiv.innerHTML = summaries.join('');
-            attachRouteCardClickHandlers(resultsDiv);
-        } else {
-            resultsDiv.innerHTML = `
-                <div class="error">
-                    ⚠️ Oops :( no meeting point was found.
-                </div>
-            `;
-        }
-
-    } catch (error) {
-        console.error('CATCH BLOCK TRIGGERED:', error);
-        console.error('Error stack:', error.stack);
-        resultsDiv.innerHTML = `
-            <div class="error">
-                ❌ Network error: ${error.message}
-            </div>
-        `;
-    } finally {
-        console.log('Resetting UI state');
-        searchBtn.disabled = false;
-        searchBtn.textContent = '🚇 Find Meeting Point';
-        try {
-            const overlay = document.getElementById('global-loading-overlay');
-            if (overlay) {
-                overlay.style.display = 'none';
-                overlay.setAttribute('aria-hidden', 'true');
-                document.body.style.overflow = '';
-            }
-        } catch (_) {}
-        console.log('=== FRONTEND: Request completed ===');
-    }
+map.on("click", (e) => {
+  if (state.mode === "room") {
+    setMyLocation(e.latlng.lat, e.latlng.lng, `${e.latlng.lat.toFixed(4)}, ${e.latlng.lng.toFixed(4)}`);
+    return;
+  }
+  const which = !state.classic.a ? "a" : !state.classic.b ? "b" : null;
+  if (!which) return;
+  setClassicPin(which, e.latlng.lat, e.latlng.lng, `${e.latlng.lat.toFixed(4)}, ${e.latlng.lng.toFixed(4)}`);
 });
-// Google Places Autocomplete variables
-let autocomplete1, autocomplete2;
 
-// Initialize Google Places Autocomplete for address inputs
-function initializeAutocomplete() {
-    console.log('🔍 Initializing Google Places Autocomplete...');
-    
-    const address1Input = document.getElementById('address1');
-    const address2Input = document.getElementById('address2');
-    
-    if (!address1Input || !address2Input) {
-        console.error('Address input fields not found');
-        return;
-    }
-    
-    // Configure autocomplete options
-    const autocompleteOptions = {
-        types: ['geocode'], // Restrict to addresses
-        fields: ['formatted_address', 'geometry', 'name', 'place_id'],
-        componentRestrictions: { country: [] } // Allow all countries
-    };
-    
-    try {
-        // Initialize autocomplete for Address 1
-        autocomplete1 = new google.maps.places.Autocomplete(address1Input, autocompleteOptions);
-        autocomplete1.addListener('place_changed', () => {
-            handlePlaceSelection(autocomplete1, 'address1');
-        });
-        
-        // Initialize autocomplete for Address 2
-        autocomplete2 = new google.maps.places.Autocomplete(address2Input, autocompleteOptions);
-        autocomplete2.addListener('place_changed', () => {
-            handlePlaceSelection(autocomplete2, 'address2');
-        });
-        
-        console.log('✅ Google Places Autocomplete initialized successfully');
-        
-        // Add styling for autocomplete dropdown
-        addAutocompleteStyles();
-        
-    } catch (error) {
-        console.error('❌ Failed to initialize Google Places Autocomplete:', error);
-    }
+/* ---------- shared helpers ---------- */
+
+function debounce(fn, ms) {
+  let t;
+  return (...args) => {
+    clearTimeout(t);
+    t = setTimeout(() => fn(...args), ms);
+  };
 }
 
-// Handle place selection from autocomplete
-function handlePlaceSelection(autocomplete, inputId) {
-    console.log(`🏠 Place selected for ${inputId}`);
-    
-    const place = autocomplete.getPlace();
-    const input = document.getElementById(inputId);
-    
-    if (!place || !place.geometry) {
-        console.log('❌ No geometry data for selected place');
-        return;
-    }
-    
-    console.log(`✅ Selected place: ${place.formatted_address || place.name}`);
-    
-    // Update the input value with the formatted address
-    if (input) {
-        input.value = place.formatted_address || place.name;
-    }
-    
-    // Store place data for potential future use
-    input.dataset.placeId = place.place_id || '';
-    input.dataset.lat = place.geometry.location.lat();
-    input.dataset.lng = place.geometry.location.lng();
-    
-    // Update location status for address1 if it was changed from auto-detected location
-    if (inputId === 'address1') {
-        const locationStatus = document.getElementById('locationStatus');
-        if (locationStatus) {
-            locationStatus.textContent = '(selected from suggestions)';
-            locationStatus.style.color = '#1a73e8';
-        }
-    }
-    
-    console.log(`📍 Place coordinates: ${place.geometry.location.lat()}, ${place.geometry.location.lng()}`);
+function escapeHtml(s) {
+  const div = document.createElement("div");
+  div.textContent = s ?? "";
+  return div.innerHTML;
 }
 
-// Add custom styles for autocomplete dropdown
-function addAutocompleteStyles() {
-    // Check if styles already added
-    if (document.getElementById('autocomplete-styles')) {
-        return;
-    }
-    
-    const styles = document.createElement('style');
-    styles.id = 'autocomplete-styles';
-    styles.textContent = `
-        /* Google Places Autocomplete styling */
-        .pac-container {
-            background-color: white;
-            border: 1px solid #ccc;
-            border-radius: 8px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            font-size: 14px;
-            margin-top: 2px;
-            max-width: none !important;
-            z-index: 10000;
-        }
-        
-        .pac-container:after {
-            display: none;
-        }
-        
-        .pac-item {
-            padding: 12px 16px;
-            border-bottom: 1px solid #f0f0f0;
-            cursor: pointer;
-            line-height: 1.4;
-        }
-        
-        .pac-item:last-child {
-            border-bottom: none;
-        }
-        
-        .pac-item:hover {
-            background-color: #f8f9fa;
-        }
-        
-        .pac-item-selected {
-            background-color: #e3f2fd !important;
-        }
-        
-        .pac-matched {
-            font-weight: 600;
-            color: #1a73e8;
-        }
-        
-        .pac-item-query {
-            color: #333;
-            font-size: 14px;
-        }
-        
-        .pac-secondary-text {
-            color: #666;
-            font-size: 12px;
-            margin-top: 2px;
-        }
-        
-        .pac-icon {
-            background-image: none;
-            background-size: 16px 16px;
-            height: 16px;
-            width: 16px;
-            margin-right: 12px;
-            margin-top: 2px;
-        }
-        
-        .pac-icon-marker {
-            background-color: #4285f4;
-            border-radius: 50%;
-            position: relative;
-        }
-        
-        .pac-icon-marker:after {
-            content: "📍";
-            position: absolute;
-            top: -2px;
-            left: 2px;
-            font-size: 12px;
-        }
-    `;
-    
-    document.head.appendChild(styles);
-    console.log('✅ Autocomplete styles added');
+async function api(path, options = {}) {
+  const resp = await fetch(path, {
+    headers: options.body ? { "Content-Type": "application/json" } : undefined,
+    ...options,
+    body: options.body ? JSON.stringify(options.body) : undefined,
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    const err = new Error(data.error ?? `Request failed (${resp.status})`);
+    err.status = resp.status;
+    throw err;
+  }
+  return data;
 }
 
-// Enhanced input field setup with autocomplete hints
-function setupInputFieldEnhancements() {
-    const address1Input = document.getElementById('address1');
-    const address2Input = document.getElementById('address2');
-    
-    if (address1Input) {
-        // Add focus/blur handlers for better UX
-        address1Input.addEventListener('focus', () => {
-            console.log('📝 Address 1 input focused');
-            if (address1Input.value === '' || address1Input.value === 'Times Square, New York, NY') {
-                // Clear default value when user starts typing
-                if (address1Input.value === 'Times Square, New York, NY') {
-                    address1Input.value = '';
-                }
-            }
-        });
-        
-        address1Input.addEventListener('input', () => {
-            // Clear stored place data when user manually types
-            delete address1Input.dataset.placeId;
-            delete address1Input.dataset.lat;
-            delete address1Input.dataset.lng;
-        });
-    }
-    
-    if (address2Input) {
-        address2Input.addEventListener('focus', () => {
-            console.log('📝 Address 2 input focused');
-        });
-        
-        address2Input.addEventListener('input', () => {
-            // Clear stored place data when user manually types
-            delete address2Input.dataset.placeId;
-            delete address2Input.dataset.lat;
-            delete address2Input.dataset.lng;
-        });
-    }
+const statusEl = document.getElementById("status");
+function setStatus(msg, isError = false) {
+  statusEl.textContent = msg;
+  statusEl.classList.toggle("error", isError);
 }
 
-// Geolocation functionality for preloading current address
-async function getCurrentLocationAndAddress() {
-    console.log('🌍 Attempting to get user location...');
-    
-    const locationStatus = document.getElementById('locationStatus');
-    const address1Input = document.getElementById('address1');
-    
-    if (locationStatus) {
-        locationStatus.textContent = '(detecting...)';
-        locationStatus.style.color = '#666';
+/* ---------- geocode autocomplete ---------- */
+
+function setupAutocomplete(inputId, boxId, onPick) {
+  const input = document.getElementById(inputId);
+  const box = document.getElementById(boxId);
+
+  const search = debounce(async () => {
+    const q = input.value.trim();
+    if (q.length < 3) {
+      box.classList.remove("open");
+      return;
     }
-    
-    if (!navigator.geolocation) {
-        console.log('❌ Geolocation not supported by this browser');
-        if (locationStatus) {
-            locationStatus.textContent = '(location not supported)';
-            locationStatus.style.color = '#ff6b6b';
-        }
-        setDefaultAddress();
-        return;
-    }
-    
-    try {
-        const position = await new Promise((resolve, reject) => {
-            navigator.geolocation.getCurrentPosition(
-                resolve,
-                reject,
-                {
-                    enableHighAccuracy: true,
-                    timeout: 10000,
-                    maximumAge: 300000 // 5 minutes
-                }
-            );
-        });
-        
-        const lat = position.coords.latitude;
-        const lng = position.coords.longitude;
-        console.log(`📍 Got user location: ${lat}, ${lng}`);
-        
-        if (locationStatus) {
-            locationStatus.textContent = '(loading address...)';
-        }
-        
-        // Reverse geocode to get address
-        await reverseGeocodeAndSetAddress(lat, lng);
-        
-    } catch (error) {
-        console.log('❌ Geolocation error:', error.message);
-        console.log('🔄 Falling back to default address');
-        
-        if (locationStatus) {
-            locationStatus.textContent = '(location denied)';
-            locationStatus.style.color = '#ff6b6b';
-        }
-        
-        setDefaultAddress();
-    }
+    // Bias suggestions towards where the user is looking on the map.
+    const center = map.getCenter();
+    const results = await fetch(
+      `/api/geocode?q=${encodeURIComponent(q)}&lat=${center.lat.toFixed(4)}&lon=${center.lng.toFixed(4)}`
+    ).then((r) => r.json());
+    box.innerHTML = "";
+    results.forEach((r) => {
+      const btn = document.createElement("button");
+      btn.innerHTML = `${escapeHtml(r.name)}<br><span class="sub">${escapeHtml(r.label)}</span>`;
+      btn.addEventListener("click", () => {
+        box.classList.remove("open");
+        onPick(r);
+        map.panTo([r.lat, r.lon]);
+      });
+      box.appendChild(btn);
+    });
+    box.classList.toggle("open", results.length > 0);
+  }, 300);
+
+  input.addEventListener("input", search);
+  input.addEventListener("blur", () => setTimeout(() => box.classList.remove("open"), 200));
 }
 
-// Reverse geocode coordinates to address using Google Maps API
-async function reverseGeocodeAndSetAddress(lat, lng) {
-    try {
-        const geocoder = new google.maps.Geocoder();
-        const latlng = { lat: lat, lng: lng };
-        
-        const result = await new Promise((resolve, reject) => {
-            geocoder.geocode({ location: latlng }, (results, status) => {
-                if (status === 'OK') {
-                    resolve(results);
-                } else {
-                    reject(new Error(`Geocoding failed: ${status}`));
-                }
-            });
-        });
-        
-        if (result && result.length > 0) {
-            const address = result[0].formatted_address;
-            console.log(`📍 Reverse geocoded address: ${address}`);
-            
-            // Set the address in the input field
-            const address1Input = document.getElementById('address1');
-            const locationStatus = document.getElementById('locationStatus');
-            
-            if (address1Input) {
-                address1Input.value = address;
-                address1Input.placeholder = 'Current location detected';
-                console.log('✅ Current address loaded into Address 1 field');
-            }
-            
-            if (locationStatus) {
-                locationStatus.textContent = '(current location)';
-                locationStatus.style.color = '#34a853';
-            }
-        } else {
-            console.log('❌ No address found for coordinates');
-            setDefaultAddress();
-        }
-    } catch (error) {
-        console.error('❌ Reverse geocoding error:', error);
-        setDefaultAddress();
-    }
+setupAutocomplete("input-you", "suggestions-you", (r) => setMyLocation(r.lat, r.lon, r.name));
+setupAutocomplete("input-a", "suggestions-a", (r) => setClassicPin("a", r.lat, r.lon, r.name));
+setupAutocomplete("input-b", "suggestions-b", (r) => setClassicPin("b", r.lat, r.lon, r.name));
+
+/* ---------- help popover ---------- */
+
+const helpToggle = document.getElementById("help-toggle");
+const helpPopover = document.getElementById("help-popover");
+
+helpToggle.addEventListener("click", (e) => {
+  e.stopPropagation();
+  const open = helpPopover.hidden;
+  helpPopover.hidden = !open;
+  helpToggle.setAttribute("aria-expanded", String(open));
+});
+
+document.addEventListener("click", (e) => {
+  if (!helpPopover.hidden && !helpPopover.contains(e.target)) {
+    helpPopover.hidden = true;
+    helpToggle.setAttribute("aria-expanded", "false");
+  }
+});
+
+/* ---------- mode toggle ---------- */
+
+const roomTab = document.getElementById("mode-room");
+const classicTab = document.getElementById("mode-classic");
+const roomUi = document.getElementById("room-ui");
+const classicUi = document.getElementById("classic-ui");
+
+roomTab.addEventListener("click", () => setMode("room"));
+classicTab.addEventListener("click", () => setMode("classic"));
+
+function setMode(mode) {
+  if (mode === state.mode) return;
+  state.mode = mode;
+  const room = mode === "room";
+  roomTab.classList.toggle("active", room);
+  classicTab.classList.toggle("active", !room);
+  roomTab.setAttribute("aria-selected", String(room));
+  classicTab.setAttribute("aria-selected", String(!room));
+  roomUi.hidden = !room;
+  classicUi.hidden = room;
+  document.getElementById("help-room").hidden = !room;
+  document.getElementById("help-classic").hidden = room;
+
+  clearResults();
+  toggleMarkers(state.roomMarkerList(), room);
+  toggleMarkers([state.classic.markers.a, state.classic.markers.b], !room);
+
+  if (room) {
+    state.room.id ? startPolling() : initRoom();
+  } else {
+    stopPolling();
+    setStatus("");
+  }
+  updateFindButton();
 }
 
-// Set a default address when geolocation fails
-function setDefaultAddress() {
-    console.log('🏠 Setting default address for Address 1');
-    const address1Input = document.getElementById('address1');
-    const locationStatus = document.getElementById('locationStatus');
-    
-    if (address1Input) {
-        // Use a popular default location (Times Square, NYC)
-        address1Input.value = 'Times Square, New York, NY';
-        address1Input.placeholder = 'Start typing for suggestions...';
-        console.log('✅ Default address set');
-    }
-    
-    if (locationStatus) {
-        locationStatus.textContent = '(default location)';
-        locationStatus.style.color = '#ff9500';
-    }
+state.roomMarkerList = () => [
+  state.room.youMarker,
+  ...state.room.otherMarkers.values(),
+];
+
+function toggleMarkers(markers, show) {
+  markers.forEach((m) => {
+    if (!m) return;
+    if (show) m.addTo(map);
+    else map.removeLayer(m);
+  });
 }
 
-// Initialize geolocation when maps are ready
-function initializeLocationDetection() {
-    console.log('🚀 Initializing location detection...');
-    
-    // Wait a bit for the page to fully load
-    setTimeout(() => {
-        getCurrentLocationAndAddress();
-    }, 1000);
+/* ---------- room mode ---------- */
+
+const shareLink = document.getElementById("share-link");
+const copyBtn = document.getElementById("copy-link");
+const nameInput = document.getElementById("input-name");
+const youInput = document.getElementById("input-you");
+
+copyBtn.addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(shareLink.value);
+  } catch {
+    shareLink.select();
+    document.execCommand("copy");
+  }
+  copyBtn.textContent = "Copied!";
+  setTimeout(() => (copyBtn.textContent = "Copy link"), 1500);
+});
+
+nameInput.addEventListener(
+  "input",
+  debounce(() => {
+    const name = nameInput.value.trim();
+    if (!name || !state.room.pid) return;
+    api(`/api/rooms/${state.room.id}/participants/${state.room.pid}`, {
+      method: "PATCH",
+      body: { name },
+    }).catch(() => {});
+  }, 600)
+);
+
+async function initRoom() {
+  try {
+    const params = new URLSearchParams(location.search);
+    let id = params.get("room");
+    const invited = Boolean(id);
+    if (id) {
+      const check = await fetch(`/api/rooms/${id}`);
+      if (!check.ok) {
+        id = null;
+        setStatus("That room has expired — started a fresh one.", true);
+      }
+    }
+    if (!id) {
+      id = (await api("/api/rooms", { method: "POST" })).id;
+    }
+    state.room.id = id;
+    history.replaceState(null, "", `?room=${id}`);
+    shareLink.value = location.href;
+
+    // sessionStorage is per-tab, so every tab is its own participant —
+    // handy for testing a whole room from one browser.
+    const storageKey = `itm-pid-${id}`;
+    let pid = sessionStorage.getItem(storageKey);
+    if (pid) {
+      const view = await api(`/api/rooms/${id}`);
+      if (!view.participants.some((p) => p.id === pid)) pid = null;
+    }
+    if (!pid) {
+      const me = await api(`/api/rooms/${id}/participants`, { method: "POST", body: {} });
+      pid = me.id;
+      sessionStorage.setItem(storageKey, pid);
+    }
+    state.room.pid = pid;
+
+    // If the user dropped a pin before the join finished, sync it now.
+    if (state.room.youSet && state.room.youMarker) {
+      const pos = state.room.youMarker.getLatLng();
+      setMyLocation(pos.lat, pos.lng, youInput.value);
+    }
+
+    if (!invited) setStatus("Room created — copy the link and send it to your friends.");
+    startPolling();
+    requestGeolocation();
+  } catch (err) {
+    setStatus("Could not reach the local server to create a room.", true);
+  }
 }
 
-// Optimized POI content creation function
-function createPOIContent(place) {
-    const name = place.name || 'Unknown Place';
-    const address = place.formatted_address || 'N/A';
-    const rating = place.rating;
-    const totalRatings = place.user_ratings_total || 0;
-    const type = place.types && place.types[0] ? place.types[0].replace(/_/g, ' ') : null;
-    const website = place.website;
-    
-    // Pre-build content sections for better performance
-    const sections = [
-        `<h4 style="margin: 0 0 10px 0; color: #1a73e8; font-size: 16px; font-weight: 600;">🏛️ ${name}</h4>`,
-        `<p style="margin: 0 0 6px 0; font-size: 14px; color: #202124; line-height: 1.4;"><strong style="color: #1a73e8;">📍 Address:</strong> ${address}</p>`
-    ];
-    
-    if (rating) {
-        sections.push(`<p style="margin: 0 0 6px 0; font-size: 14px; color: #202124;"><strong style="color: #1a73e8;">⭐ Rating:</strong> ${rating}/5 (${totalRatings} reviews)</p>`);
-    }
-    
-    if (type) {
-        sections.push(`<p style="margin: 0 0 6px 0; font-size: 14px; color: #202124;"><strong style="color: #1a73e8;">🏷️ Type:</strong> ${type}</p>`);
-    }
-    
-    if (website) {
-        sections.push(`<p style="margin: 0; font-size: 14px; color: #202124;"><strong style="color: #1a73e8;">🌐 Website:</strong> <a href="${website}" target="_blank" style="color: #1a73e8; text-decoration: none;">Visit</a></p>`);
-    }
-    
-    return `
-        <div style="padding: 12px; max-width: 280px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
-            ${sections.join('')}
-        </div>
-    `;
+function requestGeolocation() {
+  if (!navigator.geolocation) return;
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      if (state.room.youSet) return; // user beat the GPS to it
+      const { latitude, longitude } = pos.coords;
+      map.setView([latitude, longitude], 13);
+      setMyLocation(latitude, longitude, "My current location");
+    },
+    () => {
+      if (!state.room.youSet) {
+        setStatus("Couldn't read your location — search for it or click the map.");
+      }
+    },
+    { enableHighAccuracy: false, timeout: 8000, maximumAge: 60000 }
+  );
 }
 
-// Ensure the callback is globally accessible for Google Maps async loader
-window.initMaps = initMaps;
+function setMyLocation(lat, lon, label, { push = true } = {}) {
+  state.room.youSet = true;
+  const me = state.room.participants.find((p) => p.id === state.room.pid);
+  const icon = pinIcon(initials(nameInput.value || me?.name), COLORS[colorIndex(me)]);
+  if (state.room.youMarker) {
+    state.room.youMarker.setLatLng([lat, lon]);
+  } else {
+    const marker = L.marker([lat, lon], { icon, draggable: true, zIndexOffset: 500 });
+    if (state.mode === "room") marker.addTo(map);
+    marker.on("dragend", () => {
+      const pos = marker.getLatLng();
+      setMyLocation(pos.lat, pos.lng, `${pos.lat.toFixed(4)}, ${pos.lng.toFixed(4)}`);
+    });
+    state.room.youMarker = marker;
+  }
+  if (label) youInput.value = label;
+  if (push && state.room.pid) {
+    api(`/api/rooms/${state.room.id}/participants/${state.room.pid}`, {
+      method: "PATCH",
+      body: { lat, lon, label: label ?? "" },
+    }).catch(() => {});
+  }
+  updateFindButton();
+}
+
+function colorIndex(participant) {
+  return ((participant?.order ?? 1) - 1) % COLORS.length;
+}
+
+function startPolling() {
+  stopPolling();
+  pollRoom();
+  state.room.pollTimer = setInterval(pollRoom, POLL_MS);
+}
+
+function stopPolling() {
+  if (state.room.pollTimer) {
+    clearInterval(state.room.pollTimer);
+    state.room.pollTimer = null;
+  }
+}
+
+async function pollRoom() {
+  if (!state.room.id) return;
+  let data;
+  try {
+    data = await api(`/api/rooms/${state.room.id}`);
+  } catch (err) {
+    if (err.status === 404) {
+      stopPolling();
+      setStatus("This room has expired. Reload the page to start a new one.", true);
+    }
+    return;
+  }
+  state.room.participants = data.participants;
+  renderParticipants();
+
+  // Someone (maybe us) ran a search — show the shared results.
+  if (data.results && data.resultsVersion !== state.room.resultsVersion) {
+    state.room.resultsVersion = data.resultsVersion;
+    if (state.mode === "room") renderResults(decorateRoomResults(data.results));
+  }
+  updateFindButton();
+}
+
+function renderParticipants() {
+  const me = state.room.participants.find((p) => p.id === state.room.pid);
+
+  // First poll after a reload: restore our own pin from the server.
+  if (me && me.lat != null && !state.room.youSet) {
+    setMyLocation(me.lat, me.lon, me.label || `${me.lat.toFixed(4)}, ${me.lon.toFixed(4)}`, { push: false });
+  }
+  if (me && !nameInput.value && !me.name.startsWith("Person ")) {
+    nameInput.value = me.name;
+  }
+  if (me) {
+    document.getElementById("pin-dot-you").style.background = COLORS[colorIndex(me)];
+    // Re-icon our marker only when name/colour actually changed — a blind
+    // setIcon every poll would interrupt an in-progress drag.
+    const sig = `${initials(me.name)}|${colorIndex(me)}`;
+    if (state.room.youMarker && sig !== state.room.youIconSig) {
+      state.room.youIconSig = sig;
+      state.room.youMarker.setIcon(pinIcon(initials(me.name), COLORS[colorIndex(me)]));
+    }
+  }
+
+  // Pins for everyone else (ours is the draggable youMarker).
+  const seen = new Set();
+  state.room.participants.forEach((p) => {
+    if (p.id === state.room.pid || p.lat == null) return;
+    seen.add(p.id);
+    const existing = state.room.otherMarkers.get(p.id);
+    const icon = pinIcon(initials(p.name), COLORS[colorIndex(p)]);
+    if (existing) {
+      existing.setLatLng([p.lat, p.lon]);
+      existing.setIcon(icon);
+    } else {
+      const marker = L.marker([p.lat, p.lon], { icon });
+      marker.bindTooltip(p.name);
+      if (state.mode === "room") marker.addTo(map);
+      state.room.otherMarkers.set(p.id, marker);
+    }
+  });
+  for (const [pid, marker] of state.room.otherMarkers) {
+    if (!seen.has(pid)) {
+      map.removeLayer(marker);
+      state.room.otherMarkers.delete(pid);
+    }
+  }
+
+  const list = document.getElementById("participants");
+  list.innerHTML = "";
+  state.room.participants.forEach((p) => {
+    const li = document.createElement("li");
+    const located = p.lat != null;
+    li.innerHTML = `
+      <span class="p-dot" style="background:${COLORS[colorIndex(p)]}"></span>
+      <span class="p-name">${escapeHtml(p.name)}${p.id === state.room.pid ? " (you)" : ""}</span>
+      <span class="p-where">${located ? escapeHtml(p.label || "pin on map") : "no pin yet"}</span>`;
+    li.classList.toggle("unlocated", !located);
+    list.appendChild(li);
+  });
+}
+
+function decorateRoomResults(results) {
+  return {
+    ...results,
+    points: results.points.map((p, i) => ({
+      ...p,
+      label: p.id === state.room.pid ? "You" : p.name,
+      color: COLORS[i % COLORS.length],
+    })),
+  };
+}
+
+/* ---------- classic mode ---------- */
+
+function setClassicPin(which, lat, lon, label) {
+  state.classic[which] = { lat, lon };
+  const color = which === "a" ? COLORS[0] : COLORS[1];
+  if (state.classic.markers[which]) {
+    state.classic.markers[which].setLatLng([lat, lon]);
+  } else {
+    const marker = L.marker([lat, lon], {
+      icon: pinIcon(which.toUpperCase(), color),
+      draggable: true,
+    }).addTo(map);
+    marker.on("dragend", () => {
+      const pos = marker.getLatLng();
+      state.classic[which] = { lat: pos.lat, lon: pos.lng };
+      document.getElementById(`input-${which}`).value = `${pos.lat.toFixed(4)}, ${pos.lng.toFixed(4)}`;
+      clearResults();
+      updateFindButton();
+    });
+    state.classic.markers[which] = marker;
+  }
+  if (label) document.getElementById(`input-${which}`).value = label;
+  clearResults();
+  updateFindButton();
+}
+
+/* ---------- controls ---------- */
+
+const budget = document.getElementById("budget");
+budget.addEventListener("input", () => {
+  document.getElementById("budget-label").textContent = `${budget.value} min`;
+});
+
+const findBtn = document.getElementById("find");
+
+function locatedCount() {
+  return state.room.participants.filter((p) => p.lat != null).length;
+}
+
+function updateFindButton() {
+  if (state.mode === "room") {
+    findBtn.disabled = locatedCount() < 2;
+  } else {
+    findBtn.disabled = !(state.classic.a && state.classic.b);
+  }
+}
+
+/* ---------- search ---------- */
+
+function clearResults() {
+  state.spotMarkers.forEach((m) => map.removeLayer(m));
+  state.spotMarkers = [];
+  clearRoutes();
+  state.lastResults = null;
+  state.activeIndex = null;
+  document.getElementById("results").innerHTML = "";
+  setStatus("");
+}
+
+function clearRoutes() {
+  state.routeLayers.forEach((l) => map.removeLayer(l));
+  state.routeLayers = [];
+}
+
+findBtn.addEventListener("click", async () => {
+  clearResults();
+  findBtn.classList.add("loading");
+  findBtn.disabled = true;
+  setStatus("Computing transit reachability for everyone…");
+
+  const departInput = document.getElementById("depart").value;
+  const options = {
+    maxMinutes: parseInt(budget.value, 10),
+    time: departInput ? new Date(departInput).toISOString() : null,
+  };
+
+  try {
+    if (state.mode === "room") {
+      const data = await api(`/api/rooms/${state.room.id}/meet`, {
+        method: "POST",
+        body: options,
+      });
+      state.room.resultsVersion = data.resultsVersion;
+      renderResults(decorateRoomResults(data));
+    } else {
+      const points = [state.classic.a, state.classic.b];
+      const data = await api("/api/meet", { method: "POST", body: { points, ...options } });
+      renderResults({
+        ...data,
+        points: points.map((p, i) => ({ ...p, label: i === 0 ? "A" : "B", color: COLORS[i] })),
+      });
+    }
+  } catch (err) {
+    setStatus(err.message ?? "Could not reach the local server.", true);
+  } finally {
+    findBtn.classList.remove("loading");
+    updateFindButton();
+  }
+});
+
+/* ---------- results ---------- */
+
+function renderResults(results) {
+  clearResults();
+  state.lastResults = results;
+  const list = document.getElementById("results");
+  setStatus(`${results.stats.common.toLocaleString()} stops reachable by all — top picks:`);
+
+  const bounds = results.points.map((p) => [p.lat, p.lon]);
+
+  results.candidates.forEach((c, i) => {
+    const marker = L.marker([c.lat, c.lon], { icon: spotIcon(i + 1) })
+      .addTo(map)
+      .on("click", () => selectCandidate(i));
+    state.spotMarkers.push(marker);
+    if (i < 3) bounds.push([c.lat, c.lon]);
+
+    const li = document.createElement("li");
+    li.dataset.index = i;
+    const transfers = c.transfers.reduce((s, t) => s + t, 0);
+    const times = results.points
+      .map(
+        (p, j) =>
+          `<span style="color:${p.color};font-weight:600">${escapeHtml(p.label)}: ${c.minutes[j]} min</span>`
+      )
+      .join(" ");
+    li.innerHTML = `
+      <div class="result-name">${i + 1}. ${escapeHtml(c.name)}</div>
+      <div class="result-times">${times}
+        <span>${transfers} transfer${transfers === 1 ? "" : "s"} total</span>
+      </div>
+      <div class="result-legs" hidden></div>`;
+    li.addEventListener("click", () => selectCandidate(i));
+    list.appendChild(li);
+  });
+
+  map.fitBounds(bounds, { padding: [60, 60], paddingTopLeft: [420, 60] });
+}
+
+/* ---------- route display ---------- */
+
+async function selectCandidate(index) {
+  const results = state.lastResults;
+  const c = results.candidates[index];
+  state.activeIndex = index;
+  clearRoutes();
+
+  document.querySelectorAll(".results li").forEach((li) => {
+    li.classList.toggle("active", Number(li.dataset.index) === index);
+    li.querySelector(".result-legs").hidden = Number(li.dataset.index) !== index;
+  });
+
+  const legsEl = document.querySelector(`.results li[data-index="${index}"] .result-legs`);
+  legsEl.textContent = "Loading routes…";
+
+  const departInput = document.getElementById("depart").value;
+  const params = new URLSearchParams({ toLat: c.lat, toLon: c.lon });
+  results.points.forEach((p) => params.append("from", `${p.lat},${p.lon}`));
+  if (departInput) params.set("time", new Date(departInput).toISOString());
+
+  const data = await fetch(`/api/routes?${params}`).then((r) => r.json());
+
+  data.itineraries.forEach((itinerary, i) => {
+    if (!itinerary) return;
+    itinerary.legs.forEach((leg) => {
+      const pts = decodePolyline(leg.geometry.points ?? "", leg.geometry.precision ?? 6);
+      if (!pts.length) return;
+      const line = L.polyline(pts, {
+        color: results.points[i].color,
+        weight: leg.mode === "WALK" ? 3 : 5,
+        opacity: 0.85,
+        dashArray: leg.mode === "WALK" ? "2 8" : null,
+      }).addTo(map);
+      state.routeLayers.push(line);
+    });
+  });
+
+  legsEl.innerHTML = data.itineraries
+    .map((it, i) => {
+      const p = results.points[i];
+      if (!it) return `<div>${escapeHtml(p.label)}: no route found</div>`;
+      const chips = it.legs
+        .filter((l) => l.mode !== "WALK")
+        .map((l) => `<span class="leg-chip">${escapeHtml(l.route ?? l.mode)}</span>`)
+        .join(" → ");
+      return `<div><strong style="color:${p.color}">${escapeHtml(p.label)}</strong> ${Math.round(it.duration / 60)} min: ${chips || "walk"}</div>`;
+    })
+    .join("");
+}
+
+/* Google encoded polyline decoder, parameterised by precision (MOTIS uses 6). */
+function decodePolyline(encoded, precision) {
+  const factor = Math.pow(10, precision);
+  const points = [];
+  let index = 0, lat = 0, lon = 0;
+  while (index < encoded.length) {
+    for (const which of ["lat", "lon"]) {
+      let result = 0, shift = 0, byte;
+      do {
+        byte = encoded.charCodeAt(index++) - 63;
+        result |= (byte & 0x1f) << shift;
+        shift += 5;
+      } while (byte >= 0x20);
+      const delta = result & 1 ? ~(result >> 1) : result >> 1;
+      if (which === "lat") lat += delta;
+      else lon += delta;
+    }
+    points.push([lat / factor, lon / factor]);
+  }
+  return points;
+}
+
+/* ---------- boot ---------- */
+
+initRoom();
