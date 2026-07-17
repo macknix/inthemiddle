@@ -122,6 +122,12 @@ class TestMeet(ApiTestCase):
         for call in mock_ota.call_args_list:
             self.assertEqual(call.args[2], 90)
 
+    def test_junk_max_minutes_falls_back_to_default(self):
+        # Must not 500 — the Worker port tolerates junk too (parity).
+        resp, mock_ota = self.meet({"points": [HACKNEY, BRIXTON], "maxMinutes": "soon"})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(mock_ota.call_args.args[2], 60)
+
     def test_single_point_is_rejected(self):
         resp = self.http.post("/api/meet", json={"points": [HACKNEY]})
         self.assertEqual(resp.status_code, 400)
@@ -214,7 +220,8 @@ class TestRoomEndpoints(ApiTestCase):
         me = self.join(room_id, name="Mack")
         friend = self.join(room_id)
         self.assertEqual(me["name"], "Mack")
-        self.assertEqual(friend["name"], "Person 2")
+        # No name supplied -> a generated word-pair name.
+        self.assertRegex(friend["name"], r"^[A-Z][a-z]+ [A-Z][a-z]+$")
 
         view = self.http.get(f"/api/rooms/{room_id}").get_json()
         self.assertEqual([p["id"] for p in view["participants"]], [me["id"], friend["id"]])

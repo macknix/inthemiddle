@@ -31,17 +31,29 @@ class TestRoomStore(unittest.TestCase):
     def test_view_unknown_room_is_none(self):
         self.assertIsNone(self.store.view("nope"))
 
-    def test_participants_named_by_join_order(self):
+    def test_participants_get_generated_names_in_join_order(self):
         rid = self.store.create()
         p1 = self.store.add_participant(rid)
         p2 = self.store.add_participant(rid, name="Sam")
         p3 = self.store.add_participant(rid)
-        self.assertEqual(p1["name"], "Person 1")
+        # Default names are friendly word pairs ("Sunny Otter"), unique
+        # within the room; explicit names are kept as-is.
+        self.assertRegex(p1["name"], r"^[A-Z][a-z]+ [A-Z][a-z]+$")
         self.assertEqual(p2["name"], "Sam")
-        self.assertEqual(p3["name"], "Person 3")
+        self.assertRegex(p3["name"], r"^[A-Z][a-z]+ [A-Z][a-z]+$")
+        self.assertNotEqual(p1["name"], p3["name"])
         view = self.store.view(rid)
         self.assertEqual([p["id"] for p in view["participants"]],
                          [p1["id"], p2["id"], p3["id"]])
+
+    def test_generated_names_fall_back_when_exhausted(self):
+        with patch.object(rooms_module, "ADJECTIVES", ["sunny"]), \
+             patch.object(rooms_module, "ANIMALS", ["otter"]):
+            rid = self.store.create()
+            first = self.store.add_participant(rid)
+            second = self.store.add_participant(rid)
+        self.assertEqual(first["name"], "Sunny Otter")
+        self.assertEqual(second["name"], "Person 2")
 
     def test_capacity(self):
         rid = self.store.create()

@@ -9,13 +9,12 @@ from flask import Flask, jsonify, request, send_from_directory
 
 from . import algorithms, geocoding
 from .rooms import MAX_PARTICIPANTS, RoomStore
-from .transitous import TransitousClient, TransitousError
+from .transitous import MAX_MAX_MINUTES, TransitousClient, TransitousError
 
 logging.basicConfig(level=logging.INFO)
 
 PUBLIC_DIR = Path(__file__).resolve().parent.parent / "public"
 DEFAULT_MAX_MINUTES = 60
-MAX_MAX_MINUTES = 90
 
 app = Flask(__name__, static_folder=str(PUBLIC_DIR), static_url_path="")
 client = TransitousClient()
@@ -43,6 +42,15 @@ def geocode():
     except (KeyError, ValueError):
         bias = None
     return jsonify(geocoding.search(client, query, bias))
+
+
+def _parse_max_minutes(body):
+    """The capped time budget; junk input falls back to the default."""
+    try:
+        minutes = int(body.get("maxMinutes", DEFAULT_MAX_MINUTES))
+    except (TypeError, ValueError):
+        minutes = DEFAULT_MAX_MINUTES
+    return min(minutes, MAX_MAX_MINUTES)
 
 
 def _departure_anchor(body):
@@ -120,7 +128,7 @@ def meet():
             {"error": f"Between 2 and {MAX_PARTICIPANTS} starting points required."}
         ), 400
 
-    max_minutes = min(int(body.get("maxMinutes", DEFAULT_MAX_MINUTES)), MAX_MAX_MINUTES)
+    max_minutes = _parse_max_minutes(body)
     when = _departure_anchor(body)
 
     result = _compute_meet(points, max_minutes, when)
@@ -223,7 +231,7 @@ def room_meet(room_id):
         ), 400
 
     body = request.get_json(force=True, silent=True) or {}
-    max_minutes = min(int(body.get("maxMinutes", DEFAULT_MAX_MINUTES)), MAX_MAX_MINUTES)
+    max_minutes = _parse_max_minutes(body)
     when = _departure_anchor(body)
 
     result = _compute_meet(located, max_minutes, when)

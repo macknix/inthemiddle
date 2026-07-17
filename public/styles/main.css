@@ -7,8 +7,6 @@
   --line: #285a48;
   --accent: #408a71;
   --accent-strong: #b0e4cc;
-  --pin-a: #7fb4ff;
-  --pin-b: #ff8fb8;
   --spot: #408a71;
   --radius: 14px;
   --shadow: 0 10px 40px rgba(0, 0, 0, 0.55);
@@ -36,9 +34,9 @@ html, body {
   position: fixed;
   top: 16px;
   left: 16px;
-  bottom: 16px;
   z-index: 1000;
   width: 360px;
+  max-height: calc(100vh - 32px);
   max-width: calc(100vw - 32px);
   display: flex;
   flex-direction: column;
@@ -54,7 +52,57 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
 }
+
+/* One-line status shown in the title bar while the panel is collapsed. */
+.status-mini {
+  display: none;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+  font-size: 11px;
+  color: var(--muted);
+}
+.status-mini.error { color: #ff9b8a; }
+
+/* Round icon buttons in the title bar (share, help, collapse). */
+.icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  line-height: 1;
+}
+.icon-btn:hover,
+.icon-btn[aria-expanded="true"] {
+  color: var(--accent-strong);
+  border-color: var(--accent);
+}
+.icon-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.icon-btn.loading { animation: pulse 1.2s ease-in-out infinite; }
+.icon-btn[hidden] { display: none; }
+/* Mobile-only buttons: the collapse chevron and the compact find button
+ * (desktop keeps the full-width "Find the middle" button instead). */
+#panel-toggle,
+#find-mini { display: none; }
 
 .panel-header {
   position: relative;
@@ -76,31 +124,11 @@ html, body {
 
 /* --- help --- */
 
-#help-toggle {
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  border: 1px solid var(--line);
-  background: var(--surface);
-  color: var(--muted);
-  font: inherit;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  line-height: 1;
-}
-#help-toggle:hover,
-#help-toggle[aria-expanded="true"] {
-  color: var(--accent-strong);
-  border-color: var(--accent);
-}
-
+/* Fixed-position (placed by JS) so the panel's scroll overflow can't clip it. */
 .help-popover {
-  position: absolute;
-  top: calc(100% + 8px);
-  left: 0;
-  right: 0;
-  z-index: 30;
+  position: fixed;
+  z-index: 2000;
+  width: min(340px, calc(100vw - 24px));
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -108,6 +136,8 @@ html, body {
   padding: 12px 14px;
   font-size: 13px;
   line-height: 1.5;
+  max-height: 70vh;
+  overflow-y: auto;
 }
 .help-popover ul {
   margin: 0;
@@ -116,28 +146,35 @@ html, body {
 .help-popover li + li { margin-top: 6px; }
 .help-popover strong { color: var(--accent-strong); }
 
-/* --- mode tabs --- */
+/* --- mode tabs (compact, in the title bar) --- */
 
 .mode-tabs {
   display: flex;
-  gap: 6px;
-  margin-bottom: 12px;
-  padding: 3px;
+  flex: none;
+  gap: 2px;
+  padding: 2px;
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 9px;
 }
 .mode-tabs button {
-  flex: 1;
-  padding: 7px 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 20px;
+  padding: 0;
   font: inherit;
-  font-size: 12px;
-  font-weight: 600;
   color: var(--muted);
   background: none;
   border: 0;
-  border-radius: 8px;
+  border-radius: 7px;
   cursor: pointer;
+}
+.mode-tabs svg {
+  display: block;
+  width: 14px;
+  height: 14px;
 }
 .mode-tabs button:hover { color: var(--ink); }
 .mode-tabs button.active {
@@ -147,45 +184,10 @@ html, body {
 
 /* --- room sharing --- */
 
-.share-row {
-  position: relative;
-  display: flex;
-  gap: 6px;
-  margin-bottom: 10px;
-}
-.share-row input {
-  cursor: pointer;
-  flex: 1;
-  min-width: 0;
-  padding: 8px 10px;
-  font: inherit;
-  font-size: 12px;
-  color: var(--muted);
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  outline: none;
-}
-.share-row button {
-  padding: 8px 12px;
-  font: inherit;
-  font-size: 12px;
-  font-weight: 600;
-  white-space: nowrap;
-  color: var(--accent-strong);
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  cursor: pointer;
-}
-.share-row input:hover { border-color: var(--accent); }
-.share-row button:hover { border-color: var(--accent); }
-
+/* Fixed-position (placed by JS) so the panel's scroll overflow can't clip it. */
 .share-menu {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
-  z-index: 25;
+  position: fixed;
+  z-index: 2000;
   min-width: 140px;
   background: var(--surface);
   border: 1px solid var(--line);
@@ -306,7 +308,6 @@ html, body {
 }
 .field input::placeholder { color: var(--muted); }
 .field input:focus { border-color: var(--accent); }
-.field input.no-dot { padding-left: 12px; }
 /* Leave room for the × remove button on manual address rows. */
 #manual-fields .field input { padding-right: 34px; }
 
@@ -403,34 +404,7 @@ html, body {
 }
 .status.error { color: #ff9b8a; }
 
-/* --- results --- */
-
-.results {
-  list-style: none;
-  margin: 12px 0 0;
-  padding: 0;
-}
-
-.results li {
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 10px 12px;
-  margin-bottom: 8px;
-  background: var(--surface);
-  cursor: pointer;
-  transition: border-color 0.15s, background 0.15s;
-}
-.results li:hover { border-color: var(--accent); }
-.results li.active {
-  border-color: var(--accent);
-  background: rgba(64, 138, 113, 0.18);
-}
-
-.result-name {
-  font-size: 14px;
-  font-weight: 600;
-  margin-bottom: 4px;
-}
+/* --- result popups (shown on the map's numbered pins) --- */
 
 .result-times {
   display: flex;
@@ -438,12 +412,6 @@ html, body {
   flex-wrap: wrap;
   font-size: 12px;
   color: var(--muted);
-}
-.result-legs {
-  margin-top: 8px;
-  font-size: 11px;
-  color: var(--muted);
-  line-height: 1.7;
 }
 .leg-chip {
   display: inline-block;
@@ -477,7 +445,8 @@ html, body {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
   color: var(--bg);
   font-weight: 700;
-  font-size: 13px;
+  font-size: 11px; /* fits two-letter initials ("SO" for Sunny Otter) */
+  letter-spacing: -0.02em;
 }
 .marker-pin span { transform: rotate(45deg); }
 
@@ -503,22 +472,95 @@ html, body {
 }
 
 /* Leaflet chrome on a dark page */
-.leaflet-control-zoom a {
+.spot-popup .leaflet-popup-content-wrapper {
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+.spot-popup .leaflet-popup-tip {
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+.spot-popup .leaflet-popup-content {
+  margin: 12px 14px;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.spot-popup .leaflet-popup-close-button {
+  color: var(--muted);
+  padding: 6px 8px 0 0;
+}
+.popup-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent-strong);
+  margin-bottom: 4px;
+  padding-right: 10px;
+}
+.popup-legs {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.leaflet-control-zoom a,
+.locate-btn {
   background: var(--surface);
   color: var(--ink);
   border-color: var(--line);
 }
-.leaflet-control-zoom a:hover { background: var(--line); }
+.leaflet-control-zoom a:hover,
+.locate-btn:hover { background: var(--line); }
+.locate-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.locate-btn svg {
+  width: 15px;
+  height: 15px;
+}
 .leaflet-control-attribution {
   background: rgba(9, 20, 19, 0.8);
   color: var(--muted);
 }
 .leaflet-control-attribution a { color: var(--muted); }
 
+/* Phones: the panel becomes a bottom sheet that collapses to a slim bar so
+ * the map (and the result pins) stay visible. */
 @media (max-width: 640px) {
   .panel {
     top: auto;
-    max-height: 62vh;
-    width: calc(100vw - 32px);
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100vw;
+    max-width: none;
+    max-height: 58vh;
+    border-radius: 16px 16px 0 0;
+    border-left: 0;
+    border-right: 0;
+    border-bottom: 0;
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
   }
+  .panel-header h1 { font-size: 16px; }
+  .tagline,
+  .credits { display: none; }
+  #panel-toggle { display: flex; }
+
+  /* The title bar is a full icon toolbar on phones: tabs, find, share,
+   * help. The big find button is redundant there. */
+  #find-mini { display: flex; }
+  #find { display: none; }
+  #room-ui,
+  #classic-ui { margin-top: 10px; }
+
+  .panel.collapsed > :not(.panel-header) { display: none; }
+  .panel.collapsed .status-mini { display: block; }
+  /* Collapsed: icons only. */
+  .panel.collapsed h1 { display: none; }
 }

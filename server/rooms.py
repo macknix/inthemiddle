@@ -40,6 +40,15 @@ def _now() -> float:
     return time.monotonic()
 
 
+def _random_name(taken) -> str:
+    """A friendly display name like "Sunny Otter", unique within the room."""
+    for _ in range(20):
+        name = f"{secrets.choice(ADJECTIVES).title()} {secrets.choice(ANIMALS).title()}"
+        if name not in taken:
+            return name
+    return f"Person {len(taken) + 1}"
+
+
 def _friendly_id(taken) -> str:
     """A word-pair id like `sunny-otter`, digits appended if space runs out."""
     for _ in range(20):
@@ -112,10 +121,11 @@ class RoomStore:
                 return False
             room["join_counter"] += 1
             pid = secrets.token_urlsafe(8)
+            taken = {p["name"] for p in room["participants"].values()}
             participant = {
                 "id": pid,
                 "order": room["join_counter"],
-                "name": name or f"Person {room['join_counter']}",
+                "name": name or _random_name(taken),
                 "lat": None,
                 "lon": None,
                 "label": None,

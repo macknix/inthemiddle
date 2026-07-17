@@ -18,51 +18,71 @@
     <header class="panel-header">
       <div class="title-row">
         <h1>in the middle</h1>
-        <button id="help-toggle" aria-label="How to use" aria-expanded="false">?</button>
+        <span class="status-mini" id="status-mini" aria-hidden="true"></span>
+        <div class="mode-tabs" role="tablist">
+          <button id="mode-room" class="active" role="tab" aria-selected="true"
+                  aria-label="Shared room" title="Shared room — invite people with a link">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+            </svg>
+          </button>
+          <button id="mode-classic" role="tab" aria-selected="false"
+                  aria-label="Manual" title="Manual — type 2–5 addresses yourself">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
+            </svg>
+          </button>
+        </div>
+        <button id="find-mini" class="icon-btn" aria-label="Find the middle" title="Find the middle" disabled>
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/>
+          </svg>
+        </button>
+        <button id="share-btn" class="icon-btn" aria-label="Share room link" title="Share room link"
+                aria-haspopup="true" aria-expanded="false">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7"/>
+            <polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/>
+          </svg>
+        </button>
+        <button id="help-toggle" class="icon-btn" aria-label="How to use" aria-expanded="false">?</button>
+        <button id="panel-toggle" class="icon-btn" aria-label="Collapse panel" aria-expanded="true">▾</button>
       </div>
       <p class="tagline">the fair place to meet, measured by transit time</p>
+      <!-- Fallback menu when the browser has no native share sheet. -->
+      <div class="share-menu" id="share-menu" hidden>
+        <a id="share-whatsapp" target="_blank" rel="noopener">WhatsApp</a>
+        <a id="share-email">Email</a>
+        <button id="share-copy" type="button">Copy link</button>
+      </div>
       <div class="help-popover" id="help-popover" hidden>
         <ul id="help-room">
-          <li>This page is a <strong>room</strong> — click the link to copy it, or hit <strong>Share</strong>, and send it to whoever you're meeting.</li>
-          <li>Everyone who opens the link joins with their own pin. Search, click the map or drag your pin to set where you're coming from.</li>
-          <li>Once two or more people have pins, hit <strong>Find the middle</strong> — everyone in the room sees the results.</li>
-          <li>Open <strong>Options</strong> to change the max travel time or departure time.</li>
+          <li>This page is a <strong>room</strong> — hit the <strong>share button</strong> (the arrow, top right) to send or copy the link. Everyone who opens it joins this map with their own pin and a randomly generated name.</li>
+          <li>Set where you're coming from: search, tap the map, drag your pin, or hit the crosshair button on the map to use your current location.</li>
+          <li>Once two or more people have pins, hit <strong>Find the middle</strong> — everyone sees the same results. Tap a numbered pin for each person's route and times.</li>
+          <li>The tabs at the top: <strong>the people icon</strong> is this shared room; <strong>the pin icon</strong> is manual mode — type 2–5 addresses yourself, no sharing involved.</li>
+          <li><strong>Options</strong> changes the max travel time and departure time.</li>
         </ul>
         <ul id="help-classic" hidden>
-          <li>Search each starting point, or click the map to fill the next empty pin.</li>
-          <li>Use <strong>+ Add another address</strong> for more people (up to 5); drag a pin to adjust it.</li>
-          <li>Open <strong>Options</strong> to change the max travel time or departure time.</li>
-          <li>Hit <strong>Find the middle</strong>, then click a result to see everyone's route.</li>
+          <li><strong>Manual mode:</strong> enter 2–5 starting points yourself — search each one, or tap the map to fill the next empty pin. <strong>+ Add another address</strong> for more people; drag pins to adjust.</li>
+          <li>Hit <strong>Find the middle</strong>, then tap a numbered pin for each person's route and times.</li>
+          <li>The tabs at the top: <strong>the people icon</strong> switches back to the shared room (invite friends with a link); <strong>the pin icon</strong> is this manual mode.</li>
+          <li><strong>Options</strong> changes the max travel time and departure time.</li>
         </ul>
       </div>
     </header>
 
-    <div class="mode-tabs" role="tablist">
-      <button id="mode-room" class="active" role="tab" aria-selected="true">Shared room</button>
-      <button id="mode-classic" role="tab" aria-selected="false">Manual</button>
-    </div>
-
     <section id="room-ui">
-      <div class="share-row">
-        <input type="text" id="share-link" readonly aria-label="Room link — click to copy"
-               title="Click to copy" />
-        <button id="share-btn" aria-haspopup="true" aria-expanded="false">Share</button>
-        <!-- Fallback menu when the browser has no native share sheet. -->
-        <div class="share-menu" id="share-menu" hidden>
-          <a id="share-whatsapp" target="_blank" rel="noopener">WhatsApp</a>
-          <a id="share-email">Email</a>
-          <button id="share-copy" type="button">Copy link</button>
-        </div>
-      </div>
       <div class="inputs">
-        <div class="field" data-pin="you">
+        <div class="field">
           <span class="pin-dot" id="pin-dot-you"></span>
           <input type="text" id="input-you" placeholder="Your starting point" autocomplete="off" />
           <div class="suggestions" id="suggestions-you"></div>
-        </div>
-        <div class="field">
-          <input type="text" id="input-name" class="no-dot" placeholder="Your name (shown to the others)"
-                 autocomplete="off" maxlength="40" />
         </div>
       </div>
       <ul class="participants" id="participants"></ul>
@@ -85,8 +105,6 @@
 
     <button id="find" disabled>Find the middle</button>
     <p class="status" id="status"></p>
-
-    <ol class="results" id="results"></ol>
 
     <footer class="credits">
       Routing <a href="https://transitous.org" target="_blank" rel="noopener">Transitous / MOTIS</a>

@@ -14,6 +14,11 @@ import requests
 BASE_URL = "https://api.transitous.org"
 USER_AGENT = "inthemiddle/1.0 (personal project; mack.nixon@googlemail.com)"
 
+# Hard ceiling on the search budget, shared by the API layer (request
+# capping) and plan()'s street-leg allowances below so ranked minutes and
+# displayed routes always come from the same ceiling.
+MAX_MAX_MINUTES = 90
+
 # one-to-all results depend on the live timetable, so keep the TTL short
 # enough that departure times stay roughly honest.
 CACHE_TTL_SECONDS = 600
@@ -150,19 +155,25 @@ class TransitousClient:
             "toPlace": f"{to_lat},{to_lon}",
             "numItineraries": 3,
             # Mirror the one-to-all search that ranked this spot: street legs
-            # and direct walks may use up to the 90-minute budget cap (the
-            # upstream defaults of 15/30 min would produce slower routes than
-            # the minutes shown in the results list).
-            "maxDirectTime": 90 * 60,
-            "maxPreTransitTime": 90 * 60,
-            "maxPostTransitTime": 90 * 60,
+            # and direct walks may use up to the budget cap (the upstream
+            # defaults of 15/30 min would produce slower routes than the
+            # minutes shown in the results list).
+            "maxDirectTime": MAX_MAX_MINUTES * 60,
+            "maxPreTransitTime": MAX_MAX_MINUTES * 60,
+            "maxPostTransitTime": MAX_MAX_MINUTES * 60,
         }
         if when:
             params["time"] = when
         data = self._get("/api/v6/plan", params)
         # MOTIS suppresses transit itineraries slower than the fastest direct
         # walk, so nearby destinations often have *only* a `direct` result.
-        options = data.get("itineraries", []) + data.get("direct", [])[:1]
+        # Entries without an endTime are malformed — drop them rather than
+        # letting them crash the earliest-arrival comparison.
+        options = [
+            o
+            for o in data.get("itineraries", []) + data.get("direct", [])[:1]
+            if o.get("endTime") is not None
+        ]
         if not options:
             return None
 

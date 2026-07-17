@@ -12,6 +12,8 @@ No API keys, no billing. All data comes from free services:
 - [Photon](https://photon.komoot.io) — OSM geocoding for addresses and postcodes
 - [CARTO / OpenStreetMap](https://www.openstreetmap.org) — map tiles
 
+Live at **[middle.macknixon.com](https://middle.macknixon.com)**.
+
 ## Run it
 
 ```bash
@@ -25,6 +27,24 @@ Tests (fully offline, all HTTP mocked):
 ```bash
 python -m unittest discover -s server/tests -t .
 ```
+
+## Deploy (Cloudflare Workers)
+
+Production runs on a Cloudflare Worker: `worker/` is a TypeScript port of
+the Flask API (same endpoints, same responses — the frontend runs unchanged
+against either backend), with rooms stored in a SQLite-backed Durable
+Object instead of process memory. `wrangler.jsonc` serves `public/` as
+static assets and provisions the `middle.macknixon.com` custom domain.
+
+```bash
+npm install
+npm run dev              # Worker + Durable Object locally → :8787
+npm run check            # tsc --noEmit
+npm run deploy           # → middle.macknixon.com
+```
+
+When changing the API, change `server/` and `worker/` together and keep the
+responses identical; the Python suite is the behavioural reference.
 
 ## Two modes
 
