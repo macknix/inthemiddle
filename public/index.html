@@ -8,7 +8,8 @@
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles/main.css" />
+  <!-- Absolute paths: this page is also served at /r/<room-id>. -->
+  <link rel="stylesheet" href="/styles/main.css" />
 </head>
 <body>
   <div id="map"></div>
@@ -22,29 +23,36 @@
       <p class="tagline">the fair place to meet, measured by transit time</p>
       <div class="help-popover" id="help-popover" hidden>
         <ul id="help-room">
-          <li>This page is a <strong>room</strong> — copy the link and send it to whoever you're meeting.</li>
+          <li>This page is a <strong>room</strong> — click the link to copy it, or hit <strong>Share</strong>, and send it to whoever you're meeting.</li>
           <li>Everyone who opens the link joins with their own pin. Search, click the map or drag your pin to set where you're coming from.</li>
           <li>Once two or more people have pins, hit <strong>Find the middle</strong> — everyone in the room sees the results.</li>
           <li>Open <strong>Options</strong> to change the max travel time or departure time.</li>
         </ul>
         <ul id="help-classic" hidden>
-          <li>Search both starting points, or click the map to drop pin <strong>A</strong> then pin <strong>B</strong>.</li>
-          <li>Drag a pin to adjust it.</li>
+          <li>Search each starting point, or click the map to fill the next empty pin.</li>
+          <li>Use <strong>+ Add another address</strong> for more people (up to 5); drag a pin to adjust it.</li>
           <li>Open <strong>Options</strong> to change the max travel time or departure time.</li>
-          <li>Hit <strong>Find the middle</strong>, then click a result to see both routes.</li>
+          <li>Hit <strong>Find the middle</strong>, then click a result to see everyone's route.</li>
         </ul>
       </div>
     </header>
 
     <div class="mode-tabs" role="tablist">
       <button id="mode-room" class="active" role="tab" aria-selected="true">Shared room</button>
-      <button id="mode-classic" role="tab" aria-selected="false">Two addresses</button>
+      <button id="mode-classic" role="tab" aria-selected="false">Manual</button>
     </div>
 
     <section id="room-ui">
       <div class="share-row">
-        <input type="text" id="share-link" readonly aria-label="Room link" />
-        <button id="copy-link">Copy link</button>
+        <input type="text" id="share-link" readonly aria-label="Room link — click to copy"
+               title="Click to copy" />
+        <button id="share-btn" aria-haspopup="true" aria-expanded="false">Share</button>
+        <!-- Fallback menu when the browser has no native share sheet. -->
+        <div class="share-menu" id="share-menu" hidden>
+          <a id="share-whatsapp" target="_blank" rel="noopener">WhatsApp</a>
+          <a id="share-email">Email</a>
+          <button id="share-copy" type="button">Copy link</button>
+        </div>
       </div>
       <div class="inputs">
         <div class="field" data-pin="you">
@@ -61,18 +69,8 @@
     </section>
 
     <section id="classic-ui" hidden>
-      <div class="inputs">
-        <div class="field" data-pin="a">
-          <span class="pin-dot pin-a"></span>
-          <input type="text" id="input-a" placeholder="Your starting point" autocomplete="off" />
-          <div class="suggestions" id="suggestions-a"></div>
-        </div>
-        <div class="field" data-pin="b">
-          <span class="pin-dot pin-b"></span>
-          <input type="text" id="input-b" placeholder="Their starting point" autocomplete="off" />
-          <div class="suggestions" id="suggestions-b"></div>
-        </div>
-      </div>
+      <div class="inputs" id="manual-fields"></div>
+      <button id="add-address" class="add-address" type="button">+ Add another address</button>
     </section>
 
     <div class="controls">
@@ -98,6 +96,6 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
           integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-  <script src="scripts/main.js"></script>
+  <script src="/scripts/main.js"></script>
 </body>
 </html>

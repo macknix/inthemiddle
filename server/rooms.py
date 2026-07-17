@@ -17,9 +17,39 @@ ROOM_TTL_SECONDS = 24 * 3600
 # so keep rooms small out of fair-use politeness.
 MAX_PARTICIPANTS = 5
 
+# Room ids are short word pairs so the share link stays tiny and readable
+# aloud. That makes them guessable in principle — acceptable for ephemeral
+# rooms that only ever hold self-reported pins on a personal deployment.
+ADJECTIVES = [
+    "amber", "bold", "brave", "breezy", "bright", "calm", "cheery", "clever",
+    "cosy", "eager", "fancy", "fuzzy", "gentle", "giddy", "golden", "happy",
+    "jolly", "keen", "kind", "lively", "lucky", "mellow", "merry", "nimble",
+    "perky", "plucky", "proud", "quick", "quiet", "rosy", "shiny", "snug",
+    "spry", "sunny", "swift", "tidy", "warm", "wise", "witty", "zesty",
+]
+ANIMALS = [
+    "badger", "bee", "crow", "deer", "dove", "duck", "ferret", "finch",
+    "fox", "frog", "goose", "hare", "heron", "koala", "lark", "lemur",
+    "lynx", "mole", "newt", "otter", "owl", "panda", "pony", "puffin",
+    "quail", "robin", "seal", "shrew", "sparrow", "squid", "stoat", "swan",
+    "tapir", "toad", "trout", "vole", "walrus", "weasel", "wren", "yak",
+]
+
 
 def _now() -> float:
     return time.monotonic()
+
+
+def _friendly_id(taken) -> str:
+    """A word-pair id like `sunny-otter`, digits appended if space runs out."""
+    for _ in range(20):
+        rid = f"{secrets.choice(ADJECTIVES)}-{secrets.choice(ANIMALS)}"
+        if rid not in taken:
+            return rid
+    while True:
+        rid = f"{secrets.choice(ADJECTIVES)}-{secrets.choice(ANIMALS)}-{secrets.randbelow(90) + 10}"
+        if rid not in taken:
+            return rid
 
 
 class RoomStore:
@@ -31,7 +61,7 @@ class RoomStore:
     def create(self) -> str:
         with self._lock:
             self._evict_expired()
-            room_id = secrets.token_urlsafe(6)
+            room_id = _friendly_id(self._rooms)
             self._rooms[room_id] = {
                 "participants": {},  # pid -> participant dict
                 "join_counter": 0,
@@ -108,6 +138,21 @@ class RoomStore:
                     participant[key] = fields[key]
             room["touched"] = _now()
             return dict(participant)
+
+    def remove_participant(self, room_id: str, pid: str) -> Optional[bool]:
+        """Drop a participant (e.g. they closed the tab); None if room unknown.
+
+        Returns whether the participant was present — removing twice is fine,
+        which keeps the unload beacon idempotent.
+        """
+        with self._lock:
+            room = self._live(room_id)
+            if room is None:
+                return None
+            found = room["participants"].pop(pid, None) is not None
+            if found:
+                room["touched"] = _now()
+            return found
 
     def located_participants(self, room_id: str) -> Optional[List[Dict]]:
         """Participants that have a pin, in join order; None if room unknown."""

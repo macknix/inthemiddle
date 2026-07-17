@@ -1,21 +1,24 @@
 /* in the middle — frontend. Leaflet map + calls to the local Flask API.
  *
  * Two modes:
- *  - "room" (default): the page is a shareable session (?room=<id>). Everyone
+ *  - "room" (default): the page is a shareable session (/r/<id>). Everyone
  *    who opens the link joins with their own pin; pins sync by polling and
  *    search results are shared with the whole room.
- *  - "classic": the original single-screen mode — type two addresses.
+ *  - "classic" (the "Manual" tab): single-screen mode — type 2–5 addresses
+ *    yourself, no sharing involved.
  */
 
 "use strict";
 
-/* One colour per participant, assigned by join order (classic uses 0 and 1). */
+/* One colour per participant, assigned by join order (manual rows in order). */
 const COLORS = ["#7fb4ff", "#ff8fb8", "#ffd479", "#9ef0a8", "#c9a2ff"];
+const LABELS = ["A", "B", "C", "D", "E"];
+const MAX_MANUAL = 5; // matches the server's per-room participant cap
 const POLL_MS = 3000;
 
 const state = {
   mode: "room",
-  classic: { a: null, b: null, markers: { a: null, b: null } },
+  classic: { rows: [] }, // {point, marker, field, dot, input} per address
   room: {
     id: null,
     pid: null,
@@ -65,13 +68,13 @@ function initials(name) {
 }
 
 map.on("click", (e) => {
+  const coords = `${e.latlng.lat.toFixed(4)}, ${e.latlng.lng.toFixed(4)}`;
   if (state.mode === "room") {
-    setMyLocation(e.latlng.lat, e.latlng.lng, `${e.latlng.lat.toFixed(4)}, ${e.latlng.lng.toFixed(4)}`);
+    setMyLocation(e.latlng.lat, e.latlng.lng, coords);
     return;
   }
-  const which = !state.classic.a ? "a" : !state.classic.b ? "b" : null;
-  if (!which) return;
-  setClassicPin(which, e.latlng.lat, e.latlng.lng, `${e.latlng.lat.toFixed(4)}, ${e.latlng.lng.toFixed(4)}`);
+  const row = state.classic.rows.find((r) => !r.point);
+  if (row) setManualPin(row, e.latlng.lat, e.latlng.lng, coords);
 });
 
 /* ---------- shared helpers ---------- */
@@ -113,10 +116,7 @@ function setStatus(msg, isError = false) {
 
 /* ---------- geocode autocomplete ---------- */
 
-function setupAutocomplete(inputId, boxId, onPick) {
-  const input = document.getElementById(inputId);
-  const box = document.getElementById(boxId);
-
+function setupAutocomplete(input, box, onPick) {
   const search = debounce(async () => {
     const q = input.value.trim();
     if (q.length < 3) {
@@ -146,9 +146,11 @@ function setupAutocomplete(inputId, boxId, onPick) {
   input.addEventListener("blur", () => setTimeout(() => box.classList.remove("open"), 200));
 }
 
-setupAutocomplete("input-you", "suggestions-you", (r) => setMyLocation(r.lat, r.lon, r.name));
-setupAutocomplete("input-a", "suggestions-a", (r) => setClassicPin("a", r.lat, r.lon, r.name));
-setupAutocomplete("input-b", "suggestions-b", (r) => setClassicPin("b", r.lat, r.lon, r.name));
+setupAutocomplete(
+  document.getElementById("input-you"),
+  document.getElementById("suggestions-you"),
+  (r) => setMyLocation(r.lat, r.lon, r.name)
+);
 
 /* ---------- help popover ---------- */
 
@@ -194,7 +196,7 @@ function setMode(mode) {
 
   clearResults();
   toggleMarkers(state.roomMarkerList(), room);
-  toggleMarkers([state.classic.markers.a, state.classic.markers.b], !room);
+  toggleMarkers(state.classic.rows.map((r) => r.marker), !room);
 
   if (room) {
     state.room.id ? startPolling() : initRoom();
@@ -221,19 +223,57 @@ function toggleMarkers(markers, show) {
 /* ---------- room mode ---------- */
 
 const shareLink = document.getElementById("share-link");
-const copyBtn = document.getElementById("copy-link");
+const shareBtn = document.getElementById("share-btn");
+const shareMenu = document.getElementById("share-menu");
 const nameInput = document.getElementById("input-name");
 const youInput = document.getElementById("input-you");
 
-copyBtn.addEventListener("click", async () => {
+const SHARE_TEXT = "Meet in the middle — join my room:";
+
+async function copyShareLink() {
   try {
-    await navigator.clipboard.writeText(shareLink.value);
+    // The box shows the scheme-less link; copy the full clickable URL.
+    await navigator.clipboard.writeText(location.href);
   } catch {
     shareLink.select();
     document.execCommand("copy");
   }
-  copyBtn.textContent = "Copied!";
-  setTimeout(() => (copyBtn.textContent = "Copy link"), 1500);
+  const shown = shareLink.value;
+  shareLink.value = "Copied ✓";
+  setTimeout(() => (shareLink.value = shown), 1200);
+}
+
+shareLink.addEventListener("click", copyShareLink);
+
+/* Native share sheet (WhatsApp & friends live there) when the browser has
+ * one; otherwise a small menu of share links plus copy. */
+shareBtn.addEventListener("click", async (e) => {
+  e.stopPropagation();
+  const data = { title: "in the middle", text: SHARE_TEXT, url: location.href };
+  if (navigator.canShare?.(data)) {
+    try {
+      await navigator.share(data);
+    } catch {} // user dismissed the sheet
+    return;
+  }
+  const text = encodeURIComponent(`${SHARE_TEXT} ${location.href}`);
+  document.getElementById("share-whatsapp").href = `https://wa.me/?text=${text}`;
+  document.getElementById("share-email").href =
+    `mailto:?subject=${encodeURIComponent("Meet in the middle")}&body=${text}`;
+  shareMenu.hidden = !shareMenu.hidden;
+  shareBtn.setAttribute("aria-expanded", String(!shareMenu.hidden));
+});
+
+document.getElementById("share-copy").addEventListener("click", () => {
+  copyShareLink();
+  shareMenu.hidden = true;
+});
+
+document.addEventListener("click", (e) => {
+  if (!shareMenu.hidden && !shareMenu.contains(e.target)) {
+    shareMenu.hidden = true;
+    shareBtn.setAttribute("aria-expanded", "false");
+  }
 });
 
 nameInput.addEventListener(
@@ -241,6 +281,8 @@ nameInput.addEventListener(
   debounce(() => {
     const name = nameInput.value.trim();
     if (!name || !state.room.pid) return;
+    // Remembered so you keep your name when you rejoin after closing the tab.
+    localStorage.setItem("itm-name", name);
     api(`/api/rooms/${state.room.id}/participants/${state.room.pid}`, {
       method: "PATCH",
       body: { name },
@@ -250,8 +292,9 @@ nameInput.addEventListener(
 
 async function initRoom() {
   try {
-    const params = new URLSearchParams(location.search);
-    let id = params.get("room");
+    // Share links are /r/<id>; ?room=<id> is the old form, still honoured.
+    const pathMatch = location.pathname.match(/^\/r\/([\w-]+)/);
+    let id = pathMatch ? pathMatch[1] : new URLSearchParams(location.search).get("room");
     const invited = Boolean(id);
     if (id) {
       const check = await fetch(`/api/rooms/${id}`);
@@ -264,29 +307,11 @@ async function initRoom() {
       id = (await api("/api/rooms", { method: "POST" })).id;
     }
     state.room.id = id;
-    history.replaceState(null, "", `?room=${id}`);
-    shareLink.value = location.href;
+    history.replaceState(null, "", `/r/${id}`);
+    // Show the link without the scheme — tidier, and still pasteable.
+    shareLink.value = `${location.host}/r/${id}`;
 
-    // sessionStorage is per-tab, so every tab is its own participant —
-    // handy for testing a whole room from one browser.
-    const storageKey = `itm-pid-${id}`;
-    let pid = sessionStorage.getItem(storageKey);
-    if (pid) {
-      const view = await api(`/api/rooms/${id}`);
-      if (!view.participants.some((p) => p.id === pid)) pid = null;
-    }
-    if (!pid) {
-      const me = await api(`/api/rooms/${id}/participants`, { method: "POST", body: {} });
-      pid = me.id;
-      sessionStorage.setItem(storageKey, pid);
-    }
-    state.room.pid = pid;
-
-    // If the user dropped a pin before the join finished, sync it now.
-    if (state.room.youSet && state.room.youMarker) {
-      const pos = state.room.youMarker.getLatLng();
-      setMyLocation(pos.lat, pos.lng, youInput.value);
-    }
+    await joinRoom(id);
 
     if (!invited) setStatus("Room created — copy the link and send it to your friends.");
     startPolling();
@@ -295,6 +320,50 @@ async function initRoom() {
     setStatus("Could not reach the local server to create a room.", true);
   }
 }
+
+async function joinRoom(id) {
+  // sessionStorage is per-tab, so every tab is its own participant —
+  // handy for testing a whole room from one browser.
+  const storageKey = `itm-pid-${id}`;
+  let pid = sessionStorage.getItem(storageKey);
+  if (pid) {
+    const view = await api(`/api/rooms/${id}`);
+    if (!view.participants.some((p) => p.id === pid)) pid = null;
+  }
+  if (!pid) {
+    const me = await api(`/api/rooms/${id}/participants`, {
+      method: "POST",
+      body: { name: localStorage.getItem("itm-name") || undefined },
+    });
+    pid = me.id;
+    sessionStorage.setItem(storageKey, pid);
+  }
+  state.room.pid = pid;
+
+  // If the user dropped a pin before the join finished, sync it now.
+  if (state.room.youSet && state.room.youMarker) {
+    const pos = state.room.youMarker.getLatLng();
+    setMyLocation(pos.lat, pos.lng, youInput.value);
+  }
+}
+
+// Closing the tab (or navigating away) leaves the room, so the others don't
+// wait on a ghost pin. sendBeacon is the only request type that reliably
+// survives unload; it can only POST, hence the /leave alias.
+window.addEventListener("pagehide", () => {
+  if (state.room.id && state.room.pid) {
+    navigator.sendBeacon(`/api/rooms/${state.room.id}/participants/${state.room.pid}/leave`);
+    sessionStorage.removeItem(`itm-pid-${state.room.id}`);
+    state.room.pid = null;
+  }
+});
+
+// Restored from the back-forward cache after having left: quietly rejoin.
+window.addEventListener("pageshow", (e) => {
+  if (e.persisted && state.room.id && !state.room.pid) {
+    joinRoom(state.room.id).catch(() => {});
+  }
+});
 
 function requestGeolocation() {
   if (!navigator.geolocation) return;
@@ -322,6 +391,7 @@ function setMyLocation(lat, lon, label, { push = true } = {}) {
     state.room.youMarker.setLatLng([lat, lon]);
   } else {
     const marker = L.marker([lat, lon], { icon, draggable: true, zIndexOffset: 500 });
+    marker.bindTooltip("You — drag to move");
     if (state.mode === "room") marker.addTo(map);
     marker.on("dragend", () => {
       const pos = marker.getLatLng();
@@ -406,12 +476,21 @@ function renderParticipants() {
     if (p.id === state.room.pid || p.lat == null) return;
     seen.add(p.id);
     const existing = state.room.otherMarkers.get(p.id);
-    const icon = pinIcon(initials(p.name), COLORS[colorIndex(p)]);
+    const sig = `${initials(p.name)}|${colorIndex(p)}`;
     if (existing) {
       existing.setLatLng([p.lat, p.lon]);
-      existing.setIcon(icon);
+      // Only swap the icon when it actually changed: setIcon replaces the
+      // DOM node, which would kill the hover tooltip on every poll.
+      if (existing.itmSig !== sig) {
+        existing.itmSig = sig;
+        existing.setIcon(pinIcon(initials(p.name), COLORS[colorIndex(p)]));
+      }
+      existing.setTooltipContent(p.name);
     } else {
-      const marker = L.marker([p.lat, p.lon], { icon });
+      const marker = L.marker([p.lat, p.lon], {
+        icon: pinIcon(initials(p.name), COLORS[colorIndex(p)]),
+      });
+      marker.itmSig = sig;
       marker.bindTooltip(p.name);
       if (state.mode === "room") marker.addTo(map);
       state.room.otherMarkers.set(p.id, marker);
@@ -449,28 +528,92 @@ function decorateRoomResults(results) {
   };
 }
 
-/* ---------- classic mode ---------- */
+/* ---------- manual mode ---------- */
 
-function setClassicPin(which, lat, lon, label) {
-  state.classic[which] = { lat, lon };
-  const color = which === "a" ? COLORS[0] : COLORS[1];
-  if (state.classic.markers[which]) {
-    state.classic.markers[which].setLatLng([lat, lon]);
+const manualFields = document.getElementById("manual-fields");
+const addAddressBtn = document.getElementById("add-address");
+
+addAddressBtn.addEventListener("click", () => addManualRow());
+
+function addManualRow() {
+  if (state.classic.rows.length >= MAX_MANUAL) return;
+
+  const field = document.createElement("div");
+  field.className = "field";
+  const dot = document.createElement("span");
+  dot.className = "pin-dot";
+  const input = document.createElement("input");
+  input.type = "text";
+  input.autocomplete = "off";
+  input.placeholder =
+    state.classic.rows.length === 0 ? "Your starting point" : "Another starting point";
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "remove-address";
+  remove.title = "Remove this address";
+  remove.setAttribute("aria-label", "Remove this address");
+  remove.textContent = "×";
+  const box = document.createElement("div");
+  box.className = "suggestions";
+  field.append(dot, input, remove, box);
+  manualFields.appendChild(field);
+
+  const row = { point: null, marker: null, field, dot, input };
+  state.classic.rows.push(row);
+  setupAutocomplete(input, box, (r) => setManualPin(row, r.lat, r.lon, r.name));
+  remove.addEventListener("click", () => removeManualRow(row));
+
+  refreshManualRows();
+}
+
+function removeManualRow(row) {
+  const rows = state.classic.rows;
+  if (rows.length <= 2) return; // always keep two starting points
+  rows.splice(rows.indexOf(row), 1);
+  if (row.marker) map.removeLayer(row.marker);
+  row.field.remove();
+  clearResults();
+  refreshManualRows();
+}
+
+/* Re-letter and re-colour the rows (and their pins) after any add/remove. */
+function refreshManualRows() {
+  const rows = state.classic.rows;
+  rows.forEach((row, i) => {
+    row.dot.style.background = COLORS[i];
+    if (row.marker) {
+      row.marker.setIcon(pinIcon(LABELS[i], COLORS[i]));
+      row.marker.setTooltipContent(`${LABELS[i]} — drag to move`);
+    }
+  });
+  manualFields.querySelectorAll(".remove-address").forEach((btn) => {
+    btn.hidden = rows.length <= 2;
+  });
+  addAddressBtn.hidden = rows.length >= MAX_MANUAL;
+  updateFindButton();
+}
+
+function setManualPin(row, lat, lon, label) {
+  row.point = { lat, lon };
+  const i = state.classic.rows.indexOf(row);
+  if (row.marker) {
+    row.marker.setLatLng([lat, lon]);
   } else {
     const marker = L.marker([lat, lon], {
-      icon: pinIcon(which.toUpperCase(), color),
+      icon: pinIcon(LABELS[i], COLORS[i]),
       draggable: true,
     }).addTo(map);
+    marker.bindTooltip(`${LABELS[i]} — drag to move`);
     marker.on("dragend", () => {
       const pos = marker.getLatLng();
-      state.classic[which] = { lat: pos.lat, lon: pos.lng };
-      document.getElementById(`input-${which}`).value = `${pos.lat.toFixed(4)}, ${pos.lng.toFixed(4)}`;
+      row.point = { lat: pos.lat, lon: pos.lng };
+      row.input.value = `${pos.lat.toFixed(4)}, ${pos.lng.toFixed(4)}`;
       clearResults();
       updateFindButton();
     });
-    state.classic.markers[which] = marker;
+    row.marker = marker;
   }
-  if (label) document.getElementById(`input-${which}`).value = label;
+  if (label) row.input.value = label;
   clearResults();
   updateFindButton();
 }
@@ -492,7 +635,7 @@ function updateFindButton() {
   if (state.mode === "room") {
     findBtn.disabled = locatedCount() < 2;
   } else {
-    findBtn.disabled = !(state.classic.a && state.classic.b);
+    findBtn.disabled = state.classic.rows.filter((r) => r.point).length < 2;
   }
 }
 
@@ -534,11 +677,15 @@ findBtn.addEventListener("click", async () => {
       state.room.resultsVersion = data.resultsVersion;
       renderResults(decorateRoomResults(data));
     } else {
-      const points = [state.classic.a, state.classic.b];
+      // Skip rows the user added but never filled in.
+      const filled = state.classic.rows
+        .map((row, i) => ({ row, i }))
+        .filter(({ row }) => row.point);
+      const points = filled.map(({ row }) => row.point);
       const data = await api("/api/meet", { method: "POST", body: { points, ...options } });
       renderResults({
         ...data,
-        points: points.map((p, i) => ({ ...p, label: i === 0 ? "A" : "B", color: COLORS[i] })),
+        points: points.map((p, j) => ({ ...p, label: LABELS[filled[j].i], color: COLORS[filled[j].i] })),
       });
     }
   } catch (err) {
@@ -604,10 +751,11 @@ async function selectCandidate(index) {
   const legsEl = document.querySelector(`.results li[data-index="${index}"] .result-legs`);
   legsEl.textContent = "Loading routes…";
 
-  const departInput = document.getElementById("depart").value;
   const params = new URLSearchParams({ toLat: c.lat, toLon: c.lon });
   results.points.forEach((p) => params.append("from", `${p.lat},${p.lon}`));
-  if (departInput) params.set("time", new Date(departInput).toISOString());
+  // Same departure anchor as the search, so these routes explain the ranked
+  // minutes instead of being re-planned from "now".
+  if (results.time) params.set("time", results.time);
 
   const data = await fetch(`/api/routes?${params}`).then((r) => r.json());
 
@@ -626,6 +774,10 @@ async function selectCandidate(index) {
     });
   });
 
+  const anchorMs = results.time ? Date.parse(results.time) : null;
+  const clock = (iso) =>
+    new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
   legsEl.innerHTML = data.itineraries
     .map((it, i) => {
       const p = results.points[i];
@@ -634,7 +786,13 @@ async function selectCandidate(index) {
         .filter((l) => l.mode !== "WALK")
         .map((l) => `<span class="leg-chip">${escapeHtml(l.route ?? l.mode)}</span>`)
         .join(" → ");
-      return `<div><strong style="color:${p.color}">${escapeHtml(p.label)}</strong> ${Math.round(it.duration / 60)} min: ${chips || "walk"}</div>`;
+      // Minutes from the shared anchor (waiting included), matching the
+      // ranked list; the leave/arrive clock times make the wait visible.
+      const total = anchorMs
+        ? Math.max(Math.round((Date.parse(it.endTime) - anchorMs) / 60000), 0)
+        : Math.round(it.duration / 60);
+      return `<div><strong style="color:${p.color}">${escapeHtml(p.label)}</strong> ${total} min
+        (leave ${clock(it.startTime)} → arrive ${clock(it.endTime)}): ${chips || "walk"}</div>`;
     })
     .join("");
 }
@@ -663,4 +821,6 @@ function decodePolyline(encoded, precision) {
 
 /* ---------- boot ---------- */
 
+addManualRow();
+addManualRow();
 initRoom();

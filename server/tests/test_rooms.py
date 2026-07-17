@@ -15,6 +15,19 @@ class TestRoomStore(unittest.TestCase):
         ids = {self.store.create() for _ in range(20)}
         self.assertEqual(len(ids), 20)
 
+    def test_ids_are_friendly_word_pairs(self):
+        for _ in range(10):
+            self.assertRegex(self.store.create(), r"^[a-z]+-[a-z]+(-\d\d)?$")
+
+    def test_ids_stay_unique_when_word_pairs_run_out(self):
+        # Force every plain pair to collide so the digit fallback kicks in.
+        with patch.object(rooms_module, "ADJECTIVES", ["sunny"]), \
+             patch.object(rooms_module, "ANIMALS", ["otter"]):
+            first = self.store.create()
+            second = self.store.create()
+        self.assertEqual(first, "sunny-otter")
+        self.assertRegex(second, r"^sunny-otter-\d\d$")
+
     def test_view_unknown_room_is_none(self):
         self.assertIsNone(self.store.view("nope"))
 
@@ -45,6 +58,24 @@ class TestRoomStore(unittest.TestCase):
         located = self.store.located_participants(rid)
         self.assertEqual(len(located), 1)
         self.assertEqual(located[0]["label"], "home")
+
+    def test_remove_participant(self):
+        rid = self.store.create()
+        p1 = self.store.add_participant(rid)
+        p2 = self.store.add_participant(rid)
+        self.assertIs(self.store.remove_participant(rid, p1["id"]), True)
+        view = self.store.view(rid)
+        self.assertEqual([p["id"] for p in view["participants"]], [p2["id"]])
+        # Idempotent: leaving again is not an error.
+        self.assertIs(self.store.remove_participant(rid, p1["id"]), False)
+        self.assertIsNone(self.store.remove_participant("nope", p1["id"]))
+
+    def test_removed_participant_frees_a_seat(self):
+        rid = self.store.create()
+        pids = [self.store.add_participant(rid)["id"]
+                for _ in range(rooms_module.MAX_PARTICIPANTS)]
+        self.store.remove_participant(rid, pids[0])
+        self.assertIsInstance(self.store.add_participant(rid), dict)
 
     def test_update_unknown_participant_is_none(self):
         rid = self.store.create()

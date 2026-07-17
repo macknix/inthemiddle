@@ -2,6 +2,7 @@
 
 import concurrent.futures
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_from_directory
@@ -26,6 +27,12 @@ def index():
     return send_from_directory(PUBLIC_DIR, "index.html")
 
 
+@app.route("/r/<room_id>")
+def room_page(room_id):
+    """Share links are /r/<id>; the frontend reads the id from the path."""
+    return send_from_directory(PUBLIC_DIR, "index.html")
+
+
 @app.route("/api/geocode")
 def geocode():
     query = request.args.get("q", "").strip()
@@ -36,6 +43,22 @@ def geocode():
     except (KeyError, ValueError):
         bias = None
     return jsonify(geocoding.search(client, query, bias))
+
+
+def _departure_anchor(body):
+    """The departure time every number in a search is measured from.
+
+    An explicit "leave at" wins; otherwise "now" rounded down to the minute.
+    The anchor is returned with the results and reused for later route
+    lookups, so the ranked minutes and the displayed routes agree instead of
+    each being timed from whenever their request happened to fire. Rounding
+    keeps the upstream cache useful for repeated searches.
+    """
+    when = body.get("time")
+    if when:
+        return when
+    now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    return now.isoformat().replace("+00:00", "Z")
 
 
 def _compute_meet(points, max_minutes, when):
@@ -66,6 +89,7 @@ def _compute_meet(points, max_minutes, when):
     return {
         "candidates": algorithms.rank(candidates),
         "geoMidpoint": algorithms.geographic_midpoint(points),
+        "time": when,
         "stats": {
             "reachable": [len(r) for r in reaches],
             "common": len(candidates),
@@ -97,7 +121,7 @@ def meet():
         ), 400
 
     max_minutes = min(int(body.get("maxMinutes", DEFAULT_MAX_MINUTES)), MAX_MAX_MINUTES)
-    when = body.get("time") or None
+    when = _departure_anchor(body)
 
     result = _compute_meet(points, max_minutes, when)
     if isinstance(result, tuple):
@@ -178,6 +202,16 @@ def update_participant(room_id, pid):
     return jsonify(participant)
 
 
+@app.route("/api/rooms/<room_id>/participants/<pid>", methods=["DELETE"])
+@app.route("/api/rooms/<room_id>/participants/<pid>/leave", methods=["POST"])
+def leave_room(room_id, pid):
+    # The POST alias exists because navigator.sendBeacon (used when a tab
+    # closes) can only POST. Idempotent: leaving twice is still a 204.
+    if rooms.remove_participant(room_id, pid) is None:
+        return jsonify({"error": "Room not found (it may have expired)."}), 404
+    return "", 204
+
+
 @app.route("/api/rooms/<room_id>/meet", methods=["POST"])
 def room_meet(room_id):
     located = rooms.located_participants(room_id)
@@ -190,7 +224,7 @@ def room_meet(room_id):
 
     body = request.get_json(force=True, silent=True) or {}
     max_minutes = min(int(body.get("maxMinutes", DEFAULT_MAX_MINUTES)), MAX_MAX_MINUTES)
-    when = body.get("time") or None
+    when = _departure_anchor(body)
 
     result = _compute_meet(located, max_minutes, when)
     if isinstance(result, tuple):

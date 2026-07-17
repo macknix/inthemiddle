@@ -65,6 +65,14 @@ class TestOneToAll(unittest.TestCase):
         self.assertEqual(reach["gb_HHY"]["transfers"], 0)
         self.assertEqual(reach["gb_LST"]["transfers"], 2)
 
+    def test_walking_gets_the_whole_budget(self):
+        # maxPreTransitTime defaults to 15 min upstream, which would stop
+        # walking from ever being the entire journey.
+        client = make_client(ONE_TO_ALL_PAYLOAD)
+        client.one_to_all(51.5455, -0.0553, 60)
+        params = client.session.get.call_args.kwargs["params"]
+        self.assertEqual(params["maxPreTransitTime"], 60 * 60)
+
     def test_caches_identical_requests(self):
         client = make_client(ONE_TO_ALL_PAYLOAD)
         client.one_to_all(51.5455, -0.0553, 60)
@@ -150,6 +158,22 @@ PLAN_PAYLOAD = {
 }
 
 
+WALK_ITINERARY = {
+    "duration": 660,
+    "startTime": "2026-07-05T12:00:00Z",
+    "endTime": "2026-07-05T12:11:00Z",
+    "legs": [
+        {
+            "mode": "WALK",
+            "from": {"name": "START"},
+            "to": {"name": "END"},
+            "duration": 660,
+            "legGeometry": {"points": "ghi", "precision": 6},
+        }
+    ],
+}
+
+
 class TestPlan(unittest.TestCase):
     def test_parses_itinerary_legs(self):
         client = make_client(PLAN_PAYLOAD)
@@ -162,6 +186,45 @@ class TestPlan(unittest.TestCase):
     def test_returns_none_when_no_itineraries(self):
         client = make_client({"itineraries": []})
         self.assertIsNone(client.plan(51.5455, -0.0553, 51.5464, -0.1031))
+
+    def test_allows_long_walks_like_the_ranking_search(self):
+        # Upstream defaults (30 min direct, 15 min street legs) would return
+        # slower routes than the one-to-all minutes shown in the results.
+        client = make_client(PLAN_PAYLOAD)
+        client.plan(51.5455, -0.0553, 51.5464, -0.1031)
+        params = client.session.get.call_args.kwargs["params"]
+        self.assertEqual(params["maxDirectTime"], 90 * 60)
+        self.assertEqual(params["maxPreTransitTime"], 90 * 60)
+        self.assertEqual(params["maxPostTransitTime"], 90 * 60)
+
+    def test_picks_earliest_arrival_not_first_itinerary(self):
+        later = {**PLAN_PAYLOAD["itineraries"][0], "endTime": "2026-07-05T12:40:00Z"}
+        earlier = {**PLAN_PAYLOAD["itineraries"][0], "endTime": "2026-07-05T12:20:00Z"}
+        client = make_client({"itineraries": [later, earlier]})
+        itinerary = client.plan(51.5455, -0.0553, 51.5464, -0.1031)
+        self.assertEqual(itinerary["endTime"], "2026-07-05T12:20:00Z")
+
+    def test_walk_only_route_is_returned(self):
+        # MOTIS suppresses transit slower than the direct walk, so nearby
+        # destinations come back with itineraries=[] and the walk on `direct`.
+        client = make_client({"itineraries": [], "direct": [WALK_ITINERARY]})
+        itinerary = client.plan(51.5455, -0.0553, 51.5464, -0.1031)
+        self.assertEqual(itinerary["duration"], 660)
+        self.assertEqual(itinerary["transfers"], 0)
+        self.assertEqual([l["mode"] for l in itinerary["legs"]], ["WALK"])
+
+    def test_earlier_walk_beats_transit(self):
+        # Walk arrives 12:11 vs transit's 12:29.
+        payload = {**PLAN_PAYLOAD, "direct": [WALK_ITINERARY]}
+        client = make_client(payload)
+        itinerary = client.plan(51.5455, -0.0553, 51.5464, -0.1031)
+        self.assertEqual([l["mode"] for l in itinerary["legs"]], ["WALK"])
+
+    def test_earlier_transit_beats_walk(self):
+        slow_walk = {**WALK_ITINERARY, "duration": 3180, "endTime": "2026-07-05T12:53:00Z"}
+        client = make_client({**PLAN_PAYLOAD, "direct": [slow_walk]})
+        itinerary = client.plan(51.5455, -0.0553, 51.5464, -0.1031)
+        self.assertEqual(itinerary["duration"], 1740)
 
 
 if __name__ == "__main__":

@@ -29,14 +29,16 @@ python -m unittest discover -s server/tests -t .
 ## Two modes
 
 **Shared room (default).** Opening the page creates a room and rewrites the
-URL to `/?room=<id>` — that URL *is* the invite. The page asks for your
+URL to `/r/<word-pair>` (e.g. `/r/sunny-otter`) — that URL *is* the invite.
+Closing the tab leaves the room, so nobody waits on a ghost pin. The page
+asks for your
 location to pre-fill your pin (adjust it by dragging, clicking the map, or
 searching). Everyone who opens the link joins as a participant with their
 own pin; pins sync every few seconds, and when someone hits **Find the
 middle** the results appear for the whole room.
 
-**Two addresses (toggle in the panel).** The original single-screen mode:
-type or click two starting points yourself, no sharing involved.
+**Manual (toggle in the panel).** Single-screen mode: type or click 2–5
+starting points yourself ("+ Add another address"), no sharing involved.
 
 ### Trying the room mode on one machine
 
@@ -54,7 +56,7 @@ type or click two starting points yourself, no sharing involved.
 
 To test from a phone on the same network, run
 `flask --app server.app run --host 0.0.0.0 --port 5001` and open
-`http://<your-mac-ip>:5001?room=<id>`. Browsers only allow the geolocation
+`http://<your-mac-ip>:5001/r/<id>`. Browsers only allow the geolocation
 API on HTTPS or localhost, so on the phone type an address instead.
 
 Rooms live in server memory (they expire 24 h after the last change and
@@ -107,13 +109,18 @@ The Flask application and its JSON endpoints:
 - `POST /api/meet` — direct search for 2–5 starting points (`points` list;
   the legacy `a`/`b` body still works). Optional time budget (capped at
   90 minutes) and departure time; reachability queries run concurrently and
-  the top 8 meeting spots come back with per-person `minutes`/`transfers`.
-- `GET /api/routes?from=lat,lon&from=…&toLat=&toLon=` — one door-to-spot
-  itinerary per origin, used to draw the routes on the map.
+  the top 8 meeting spots come back with per-person `minutes`/`transfers`,
+  plus the departure anchor (`time`) the search was measured from.
+- `GET /api/routes?from=lat,lon&from=…&toLat=&toLon=&time=` — one
+  door-to-spot itinerary per origin, used to draw the routes on the map.
+  The frontend passes the search's `time` anchor back in, so the itinerary
+  times explain the ranked minutes instead of being re-planned from "now".
 - `POST /api/rooms` / `GET /api/rooms/<id>` — create a room / poll its state
   (participants plus the latest shared results and a version counter).
 - `POST /api/rooms/<id>/participants` — join a room;
-  `PATCH /api/rooms/<id>/participants/<pid>` — update your pin, label or name.
+  `PATCH /api/rooms/<id>/participants/<pid>` — update your pin, label or name;
+  `DELETE /api/rooms/<id>/participants/<pid>` (or `POST …/<pid>/leave`, the
+  `sendBeacon`-friendly alias used when a tab closes) — leave the room.
 - `POST /api/rooms/<id>/meet` — run the search over every located
   participant and store the results in the room for everyone to see.
 
@@ -126,7 +133,11 @@ Transitous usage polite. Thread-safe; deliberately no persistence.
 ### `server/transitous.py`
 Client for the Transitous/MOTIS API. Wraps three endpoints — `geocode`,
 `one-to-all` (travel time to every reachable stop) and `plan` (a full
-itinerary) — and normalises their responses. Includes a 10-minute TTL cache
+itinerary) — and normalises their responses. Walking counts as a full
+journey, not just the first/last mile: `one-to-all` gets the whole time
+budget as street-leg time (upstream default is 15 min), and `plan` merges
+MOTIS's separate `direct` walking routes with the transit itineraries and
+returns whichever is faster. Includes a 10-minute TTL cache
 and an identifying `User-Agent`, both required etiquette for a community-run
 service. Geocoding uses a short 5-second timeout so autocomplete stays
 responsive even when the service is slow.
@@ -153,7 +164,7 @@ The meeting-point maths, pure functions with no I/O:
   the *geometric* one.
 
 ### `server/tests/`
-Offline unit tests (~71) covering the ranking maths, API response parsing,
+Offline unit tests (~82) covering the ranking maths, API response parsing,
 caching, geocoding merge rules (including postcode regressions like
 `E2 6LD`), the room store (capacity, TTL expiry, results versioning) and
 the Flask endpoints. All HTTP is mocked; the suite runs in well under a

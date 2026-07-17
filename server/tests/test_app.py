@@ -100,6 +100,23 @@ class TestMeet(ApiTestCase):
         self.assertEqual(data["stats"], {"reachable": [3, 3], "common": 2})
         self.assertTrue(BRIXTON["lat"] < data["geoMidpoint"]["lat"] < HACKNEY["lat"])
 
+    def test_departure_anchor_defaults_to_the_current_minute(self):
+        # The anchor is returned with the results and reused for route
+        # lookups, so ranked minutes and displayed routes measure from the
+        # same moment.
+        resp, mock_ota = self.meet({"points": [HACKNEY, BRIXTON]})
+        anchor = resp.get_json()["time"]
+        self.assertRegex(anchor, r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:00Z$")
+        for call in mock_ota.call_args_list:
+            self.assertEqual(call.args[3], anchor)
+
+    def test_explicit_departure_time_is_kept(self):
+        resp, mock_ota = self.meet(
+            {"points": [HACKNEY, BRIXTON], "time": "2026-07-20T09:00:00Z"}
+        )
+        self.assertEqual(resp.get_json()["time"], "2026-07-20T09:00:00Z")
+        self.assertEqual(mock_ota.call_args.args[3], "2026-07-20T09:00:00Z")
+
     def test_max_minutes_is_capped_at_90(self):
         _, mock_ota = self.meet({"points": [HACKNEY, BRIXTON], "maxMinutes": 240})
         for call in mock_ota.call_args_list:
@@ -234,6 +251,28 @@ class TestRoomEndpoints(ApiTestCase):
         )
         self.assertEqual(resp.status_code, 400)
 
+    def test_share_page_served_for_room_links(self):
+        resp = self.http.get("/r/sunny-otter")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn(b"in the middle", resp.data)
+
+    def test_leave_room(self):
+        room_id = self.create_room()
+        me = self.join(room_id)
+        friend = self.join(room_id)
+
+        resp = self.http.delete(f"/api/rooms/{room_id}/participants/{me['id']}")
+        self.assertEqual(resp.status_code, 204)
+        view = self.http.get(f"/api/rooms/{room_id}").get_json()
+        self.assertEqual([p["id"] for p in view["participants"]], [friend["id"]])
+
+        # The sendBeacon alias, and idempotency for repeated beacons.
+        resp = self.http.post(f"/api/rooms/{room_id}/participants/{me['id']}/leave")
+        self.assertEqual(resp.status_code, 204)
+        self.assertEqual(
+            self.http.post("/api/rooms/nope/participants/x/leave").status_code, 404
+        )
+
     def test_meet_requires_two_located_participants(self):
         room_id = self.create_room()
         me = self.join(room_id)
@@ -257,10 +296,13 @@ class TestRoomEndpoints(ApiTestCase):
         self.assertEqual(data["candidates"][0]["name"], "Highbury & Islington")
         self.assertEqual([p["name"] for p in data["points"]], ["Mack", "Sam"])
 
-        # The whole room sees the same results when polling.
+        # The whole room sees the same results when polling, including the
+        # departure anchor so everyone's route lookups line up.
         view = self.http.get(f"/api/rooms/{room_id}").get_json()
         self.assertEqual(view["resultsVersion"], 1)
         self.assertEqual(view["results"]["candidates"][0]["name"], "Highbury & Islington")
+        self.assertEqual(view["results"]["time"], data["time"])
+        self.assertRegex(data["time"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:00Z$")
 
 
 if __name__ == "__main__":

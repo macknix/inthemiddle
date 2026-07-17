@@ -102,7 +102,14 @@ class TransitousClient:
         if cached is not None:
             return cached
 
-        params = {"one": f"{lat},{lon}", "maxTravelTime": max_minutes}
+        params = {
+            "one": f"{lat},{lon}",
+            "maxTravelTime": max_minutes,
+            # Let the street leg use the whole budget (default is 15 min):
+            # walking can then be the entire journey (k=0 results), not just
+            # a short hop to the first stop.
+            "maxPreTransitTime": max_minutes * 60,
+        }
         if when:
             params["time"] = when
         data = self._get("/api/v6/one-to-all", params)
@@ -141,21 +148,33 @@ class TransitousClient:
         params = {
             "fromPlace": f"{from_lat},{from_lon}",
             "toPlace": f"{to_lat},{to_lon}",
-            "numItineraries": 1,
+            "numItineraries": 3,
+            # Mirror the one-to-all search that ranked this spot: street legs
+            # and direct walks may use up to the 90-minute budget cap (the
+            # upstream defaults of 15/30 min would produce slower routes than
+            # the minutes shown in the results list).
+            "maxDirectTime": 90 * 60,
+            "maxPreTransitTime": 90 * 60,
+            "maxPostTransitTime": 90 * 60,
         }
         if when:
             params["time"] = when
         data = self._get("/api/v6/plan", params)
-        itineraries = data.get("itineraries", [])
-        if not itineraries:
+        # MOTIS suppresses transit itineraries slower than the fastest direct
+        # walk, so nearby destinations often have *only* a `direct` result.
+        options = data.get("itineraries", []) + data.get("direct", [])[:1]
+        if not options:
             return None
 
-        it = itineraries[0]
+        # Earliest arrival, like the ranking metric — not MOTIS's own "best"
+        # scoring. endTime strings are uniform ISO from one response, so they
+        # compare safely; duration breaks ties in favour of leaving later.
+        it = min(options, key=lambda o: (o["endTime"], o["duration"]))
         itinerary = {
             "duration": it["duration"],
             "startTime": it["startTime"],
             "endTime": it["endTime"],
-            "transfers": it["transfers"],
+            "transfers": it.get("transfers", 0),
             "legs": [
                 {
                     "mode": leg["mode"],

@@ -148,11 +148,13 @@ html, body {
 /* --- room sharing --- */
 
 .share-row {
+  position: relative;
   display: flex;
   gap: 6px;
   margin-bottom: 10px;
 }
 .share-row input {
+  cursor: pointer;
   flex: 1;
   min-width: 0;
   padding: 8px 10px;
@@ -176,7 +178,39 @@ html, body {
   border-radius: 10px;
   cursor: pointer;
 }
+.share-row input:hover { border-color: var(--accent); }
 .share-row button:hover { border-color: var(--accent); }
+
+.share-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 25;
+  min-width: 140px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  padding: 4px;
+}
+.share-menu a,
+.share-menu button {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  text-decoration: none;
+  color: var(--ink);
+  background: none;
+  border: 0;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.share-menu a:hover,
+.share-menu button:hover { background: rgba(64, 138, 113, 0.2); }
 
 .participants {
   list-style: none;
@@ -221,8 +255,43 @@ html, body {
   height: 10px;
   border-radius: 50%;
 }
-.pin-a { background: var(--pin-a); }
-.pin-b { background: var(--pin-b); }
+.remove-address {
+  position: absolute;
+  right: 8px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+}
+.remove-address:hover {
+  color: var(--ink);
+  background: rgba(64, 138, 113, 0.25);
+}
+
+.add-address {
+  width: 100%;
+  margin-bottom: 8px;
+  padding: 9px 10px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  background: none;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  cursor: pointer;
+}
+.add-address:hover {
+  color: var(--accent-strong);
+  border-color: var(--accent);
+}
 
 .field input {
   width: 100%;
@@ -238,6 +307,8 @@ html, body {
 .field input::placeholder { color: var(--muted); }
 .field input:focus { border-color: var(--accent); }
 .field input.no-dot { padding-left: 12px; }
+/* Leave room for the × remove button on manual address rows. */
+#manual-fields .field input { padding-right: 34px; }
 
 .suggestions {
   position: absolute;
