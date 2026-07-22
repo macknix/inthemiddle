@@ -40,41 +40,38 @@ const state = {
 const map = L.map("map", { zoomControl: false }).setView([51.5074, -0.1278], 12);
 L.control.zoom({ position: "topright" }).addTo(map);
 
-/* Locate button under the zoom control: recenters on the user, and doubles
- * as the retry path when the automatic geolocation attempt failed. */
-const locateControl = L.control({ position: "topright" });
-locateControl.onAdd = () => {
-  const div = L.DomUtil.create("div", "leaflet-bar");
-  const a = L.DomUtil.create("a", "locate-btn", div);
-  a.href = "#";
-  a.title = "Recenter on my location";
-  a.setAttribute("aria-label", "Recenter on my location");
-  a.innerHTML = `
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <circle cx="12" cy="12" r="8"/>
-      <line x1="12" y1="1" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="23"/>
-      <line x1="1" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="23" y2="12"/>
-    </svg>`;
-  L.DomEvent.on(a, "click", (e) => {
-    L.DomEvent.preventDefault(e);
-    L.DomEvent.stopPropagation(e);
-    locateMe();
-  });
-  return div;
-};
-locateControl.addTo(map);
-
 function geoErrorMessage(err) {
   if (err && err.code === 1) {
-    return "Location is blocked for this site — allow it in your browser settings, or search / tap the map instead.";
+    return "Location is blocked for this site — tap the ⓘ or padlock next to the address bar, allow Location, then reload. Or just search / tap the map.";
   }
   return "Couldn't get a fix on your location — search or tap the map instead.";
 }
 
-function locateMe() {
+/* "granted" | "denied" | "prompt" | "unsupported" (e.g. Safari, which has
+ * no Permissions API for geolocation). Checking first lets us auto-fill a
+ * pin ONLY when it's silent (already granted — no prompt shown either way),
+ * and never call getCurrentPosition automatically otherwise: an unprompted
+ * call is exactly what gets an origin's geolocation permanently blocked by
+ * Chrome after a couple of dismissals, with no way back except the user
+ * resetting the site permission by hand. */
+async function geoPermissionState() {
+  if (!navigator.permissions?.query) return "unsupported";
+  try {
+    return (await navigator.permissions.query({ name: "geolocation" })).state;
+  } catch {
+    return "unsupported";
+  }
+}
+
+async function locateMe() {
   if (!navigator.geolocation) {
     setStatus("This browser doesn't share location — search or tap the map.", true);
+    return;
+  }
+  // Skip the round trip and give exact instructions when we already know
+  // it's blocked — Chrome won't show a prompt for this call either.
+  if ((await geoPermissionState()) === "denied") {
+    setStatus(geoErrorMessage({ code: 1 }), true);
     return;
   }
   setStatus("Finding your location…");
@@ -82,11 +79,9 @@ function locateMe() {
     (pos) => {
       const { latitude, longitude } = pos.coords;
       map.setView([latitude, longitude], Math.max(map.getZoom(), 14));
-      // First fix in room mode also becomes your pin; after that the button
-      // only moves the view, never anyone's pin.
-      if (state.mode === "room" && !state.room.youSet) {
-        setMyLocation(latitude, longitude, "My current location");
-      }
+      // A deliberate tap, unlike the automatic on-load attempt — always
+      // drop/update a pin, not just the first time.
+      placeLocationPin(latitude, longitude, "My current location");
       setStatus("");
     },
     (err) => setStatus(geoErrorMessage(err), true),
@@ -141,14 +136,21 @@ function refreshPinIcon(marker, p) {
   }
 }
 
-map.on("click", (e) => {
-  const coords = formatCoords(e.latlng.lat, e.latlng.lng);
+/* Where a located point goes: your own draggable pin in room mode, or the
+ * next empty address row in manual mode (a no-op if all rows are filled —
+ * repeated presses don't clobber an address you've already set). Shared by
+ * map clicks and the locate button. */
+function placeLocationPin(lat, lon, label) {
   if (state.mode === "room") {
-    setMyLocation(e.latlng.lat, e.latlng.lng, coords);
+    setMyLocation(lat, lon, label);
     return;
   }
   const row = state.classic.rows.find((r) => !r.point);
-  if (row) setManualPin(row, e.latlng.lat, e.latlng.lng, coords);
+  if (row) setManualPin(row, lat, lon, label);
+}
+
+map.on("click", (e) => {
+  placeLocationPin(e.latlng.lat, e.latlng.lng, formatCoords(e.latlng.lat, e.latlng.lng));
 });
 
 /* ---------- shared helpers ---------- */
@@ -193,21 +195,58 @@ function setStatus(msg, isError = false) {
   statusMini.classList.toggle("error", isError);
 }
 
-/* ---------- collapsible panel (bottom sheet on phones) ---------- */
+/* ---------- collapsible panel (bottom sheet / left dock on phones) ----------
+ *
+ * The panel starts collapsed in the HTML itself (see index.html) so there's
+ * no boot-time flash of the expanded layout on phones. On desktop that
+ * class is inert — nothing outside the phone media queries below reacts to
+ * it — so nothing needs to "undo" it there.
+ *
+ * Three ways to toggle, matching what's actually visible in each state:
+ *  - Tap the header (blank area): works whenever the header is showing,
+ *    i.e. always on portrait, and only while expanded on landscape (the
+ *    header hides when a landscape card collapses to its slim edge tab).
+ *  - #side-toggle: landscape only, visible (and toggles both ways) in
+ *    both states — the header disappearing while collapsed means it's
+ *    the only affordance left at that point, so it can't be collapsed-only.
+ *  - Tap anywhere else on a collapsed landscape tab: the handle itself is
+ *    a thin visual pill, too small a target to require precision on.
+ */
 
-const isMobile = () => window.matchMedia("(max-width: 640px)").matches;
+// Matches the CSS breakpoints exactly: portrait phones (bottom sheet) or
+// landscape phones (short + touch, so the left-docked layout applies
+// regardless of width — see styles/main.css).
+const isMobile = () =>
+  window.matchMedia("(max-width: 640px), (max-height: 500px) and (pointer: coarse)").matches;
 const panel = document.querySelector(".panel");
-const panelToggle = document.getElementById("panel-toggle");
+const panelHeader = document.querySelector(".panel-header");
+const sideToggle = document.getElementById("side-toggle");
 
 function setPanelCollapsed(collapsed) {
   panel.classList.toggle("collapsed", collapsed);
-  panelToggle.textContent = collapsed ? "▴" : "▾";
-  panelToggle.setAttribute("aria-expanded", String(!collapsed));
-  panelToggle.setAttribute("aria-label", collapsed ? "Expand panel" : "Collapse panel");
+  sideToggle.setAttribute("aria-expanded", String(!collapsed));
 }
 
-panelToggle.addEventListener("click", () => {
+panelHeader.addEventListener("click", (e) => {
+  if (!isMobile()) return;
+  if (e.target.closest("button, a, .help-popover, .share-menu")) return;
   setPanelCollapsed(!panel.classList.contains("collapsed"));
+});
+
+sideToggle.addEventListener("click", (e) => {
+  e.stopPropagation();
+  setPanelCollapsed(!panel.classList.contains("collapsed"));
+});
+
+panel.addEventListener("click", (e) => {
+  if (!isMobile() || !panel.classList.contains("collapsed")) return;
+  // Header clicks are handled entirely by panelHeader's own listener above
+  // (and re-checking .collapsed here would be wrong regardless — that
+  // listener runs first and may have already flipped it during the same
+  // bubble). It's excluded on principle, not because it's ever reachable:
+  // display:none while collapsed takes it out of hit-testing anyway.
+  if (e.target.closest(".panel-header, button, a")) return;
+  setPanelCollapsed(false);
 });
 
 /* ---------- geocode autocomplete ---------- */
@@ -300,8 +339,14 @@ const classicTab = document.getElementById("mode-classic");
 const roomUi = document.getElementById("room-ui");
 const classicUi = document.getElementById("classic-ui");
 
-roomTab.addEventListener("click", () => setMode("room"));
-classicTab.addEventListener("click", () => setMode("classic"));
+roomTab.addEventListener("click", (e) => {
+  e.stopPropagation();
+  setMode("room");
+});
+classicTab.addEventListener("click", (e) => {
+  e.stopPropagation();
+  setMode("classic");
+});
 
 function setMode(mode) {
   if (mode === state.mode) return;
@@ -350,6 +395,27 @@ const shareBtn = document.getElementById("share-btn");
 const shareMenu = document.getElementById("share-menu");
 const youInput = document.getElementById("input-you");
 
+document.getElementById("locate-btn").addEventListener("click", (e) => {
+  e.stopPropagation();
+  locateMe();
+});
+
+// Reveals the panel (if collapsed) and raises the keyboard on the next
+// address that needs filling in — the discoverable "type it instead" path
+// on phones, where the address field isn't visible until you expand.
+document.getElementById("search-btn").addEventListener("click", (e) => {
+  e.stopPropagation();
+  setPanelCollapsed(false);
+  const input =
+    state.mode === "room"
+      ? youInput
+      : (state.classic.rows.find((r) => !r.point) || state.classic.rows[0])?.input;
+  if (!input) return;
+  input.focus();
+  input.select();
+  input.scrollIntoView({ block: "center", behavior: "smooth" });
+});
+
 const SHARE_TEXT = "Meet in the middle — join my room:";
 
 async function copyShareLink() {
@@ -388,7 +454,6 @@ async function initRoom() {
     // Share links are /r/<id>; ?room=<id> is the old form, still honoured.
     const pathMatch = location.pathname.match(/^\/r\/([\w-]+)/);
     let id = pathMatch ? pathMatch[1] : new URLSearchParams(location.search).get("room");
-    const invited = Boolean(id);
     if (id) {
       const check = await fetch(`/api/rooms/${id}`);
       if (!check.ok) {
@@ -404,9 +469,8 @@ async function initRoom() {
 
     await joinRoom(id);
 
-    if (!invited) setStatus("Room created — hit the share button to invite people.");
     startPolling();
-    requestGeolocation();
+    autoFillLocationIfGranted();
   } catch (err) {
     setStatus("Could not reach the local server to create a room.", true);
   }
@@ -479,8 +543,18 @@ window.addEventListener("pageshow", (e) => {
   }
 });
 
-function requestGeolocation() {
+/* Called once on page load, with no user gesture behind it — so it must
+ * NEVER be allowed to trigger a permission prompt. Only fires
+ * getCurrentPosition when the permission is already "granted", in which
+ * case the browser shows no UI at all and this is purely a convenience
+ * auto-fill. Everyone else gets a plain hint pointing at the locate button,
+ * which is gesture-triggered and the only place we ever prompt. */
+async function autoFillLocationIfGranted() {
   if (!navigator.geolocation) return;
+  // No hint on the other outcomes — the icons (magnifying glass, crosshair)
+  // and the "?" help popover explain themselves, and leaving the status
+  // line empty gives the mobile toolbar its full width to space out.
+  if ((await geoPermissionState()) !== "granted") return;
   navigator.geolocation.getCurrentPosition(
     (pos) => {
       if (state.room.youSet) return; // user beat the GPS to it
@@ -488,13 +562,7 @@ function requestGeolocation() {
       map.setView([latitude, longitude], 13);
       setMyLocation(latitude, longitude, "My current location");
     },
-    () => {
-      // A quiet hint, not an error — pins can be set plenty of other ways,
-      // and the map's crosshair button retries geolocation.
-      if (!state.room.youSet) {
-        setStatus("Set your spot: search, tap the map, or hit the crosshair button on the map.");
-      }
-    },
+    () => {}, // granted-but-failed (GPS off, etc.) — the locate button covers retry
     { enableHighAccuracy: false, timeout: 15000, maximumAge: 120000 }
   );
 }
@@ -771,7 +839,12 @@ function clearRoutes() {
   state.routeLayers = [];
 }
 
-findButtons.forEach((b) => b.addEventListener("click", runSearch));
+findButtons.forEach((b) =>
+  b.addEventListener("click", (e) => {
+    e.stopPropagation();
+    runSearch();
+  })
+);
 
 async function runSearch() {
   clearResults();
@@ -965,6 +1038,6 @@ function decodePolyline(encoded, precision) {
 
 addManualRow();
 addManualRow();
-// Phones start with just the icon toolbar; expand for typed input/options.
-if (isMobile()) setPanelCollapsed(true);
+// Nothing to do here for the panel itself — it already starts collapsed
+// in the HTML (see index.html), aria-expanded included.
 initRoom();

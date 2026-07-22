@@ -14,7 +14,11 @@
 <body>
   <div id="map"></div>
 
-  <aside class="panel">
+  <!-- Starts collapsed in the markup itself, not via JS after load, so
+       phones never flash the expanded layout before snapping shut — see
+       styles/main.css for what .collapsed actually does (nothing on
+       desktop; the CSS only reacts to it inside the phone breakpoints). -->
+  <aside class="panel collapsed">
     <header class="panel-header">
       <div class="title-row">
         <h1>in the middle</h1>
@@ -36,10 +40,24 @@
             </svg>
           </button>
         </div>
-        <button id="find-mini" class="icon-btn" aria-label="Find the middle" title="Find the middle" disabled>
+        <button id="search-btn" class="icon-btn" aria-label="Enter an address" title="Type an address">
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
                stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/>
+          </svg>
+        </button>
+        <button id="locate-btn" class="icon-btn" aria-label="Use my location" title="Use my location">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="8"/>
+            <line x1="12" y1="1" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="23"/>
+            <line x1="1" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="23" y2="12"/>
+          </svg>
+        </button>
+        <button id="find-mini" class="icon-btn" aria-label="Find the middle" title="Find the middle" disabled>
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="9" cy="12" r="7"/><circle cx="15" cy="12" r="7"/>
           </svg>
         </button>
         <button id="share-btn" class="icon-btn" aria-label="Share room link" title="Share room link"
@@ -51,7 +69,6 @@
           </svg>
         </button>
         <button id="help-toggle" class="icon-btn" aria-label="How to use" aria-expanded="false">?</button>
-        <button id="panel-toggle" class="icon-btn" aria-label="Collapse panel" aria-expanded="true">▾</button>
       </div>
       <p class="tagline">the fair place to meet, measured by transit time</p>
       <!-- Fallback menu when the browser has no native share sheet. -->
@@ -62,20 +79,24 @@
       </div>
       <div class="help-popover" id="help-popover" hidden>
         <ul id="help-room">
-          <li>This page is a <strong>room</strong> — hit the <strong>share button</strong> (the arrow, top right) to send or copy the link. Everyone who opens it joins this map with their own pin and a randomly generated name.</li>
-          <li>Set where you're coming from: search, tap the map, drag your pin, or hit the crosshair button on the map to use your current location.</li>
-          <li>Once two or more people have pins, hit <strong>Find the middle</strong> — everyone sees the same results. Tap a numbered pin for each person's route and times.</li>
+          <li>This page is a <strong>room</strong> — hit the <strong>share button</strong> (the arrow) to send or copy the link. Everyone who opens it joins this map with their own pin and a randomly generated name.</li>
+          <li>Set where you're coming from: tap the <strong>magnifying glass</strong> to type an address, tap the map, drag your pin, or hit the <strong>crosshair</strong> to use your current location. If your browser says location is blocked, allow it from the address bar's ⓘ/padlock icon (Site settings → Location) and reload.</li>
+          <li>Once two or more people have pins, hit <strong>find the middle</strong> (the overlapping circles) — everyone sees the same results. Tap a numbered pin for each person's route and times.</li>
           <li>The tabs at the top: <strong>the people icon</strong> is this shared room; <strong>the pin icon</strong> is manual mode — type 2–5 addresses yourself, no sharing involved.</li>
           <li><strong>Options</strong> changes the max travel time and departure time.</li>
         </ul>
         <ul id="help-classic" hidden>
-          <li><strong>Manual mode:</strong> enter 2–5 starting points yourself — search each one, or tap the map to fill the next empty pin. <strong>+ Add another address</strong> for more people; drag pins to adjust.</li>
-          <li>Hit <strong>Find the middle</strong>, then tap a numbered pin for each person's route and times.</li>
+          <li><strong>Manual mode:</strong> enter 2–5 starting points yourself — tap the <strong>magnifying glass</strong> or the <strong>crosshair</strong> to fill the next empty address, or tap the map. <strong>+ Add another address</strong> for more people; drag pins to adjust.</li>
+          <li>Hit <strong>find the middle</strong> (the overlapping circles), then tap a numbered pin for each person's route and times.</li>
           <li>The tabs at the top: <strong>the people icon</strong> switches back to the shared room (invite friends with a link); <strong>the pin icon</strong> is this manual mode.</li>
           <li><strong>Options</strong> changes the max travel time and departure time.</li>
         </ul>
       </div>
     </header>
+
+    <!-- Landscape phones only: a dedicated collapse/expand handle centred
+         on the card's actual height (see styles/main.css and main.js). -->
+    <button id="side-toggle" aria-label="Expand or collapse the panel" aria-expanded="false"></button>
 
     <section id="room-ui">
       <div class="inputs">

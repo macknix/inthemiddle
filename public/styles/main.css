@@ -55,10 +55,13 @@ html, body {
   gap: 8px;
 }
 
-/* One-line status shown in the title bar while the panel is collapsed. */
+/* One-line status shown in the title bar while the panel is collapsed.
+ * flex: 0 1 auto (not 1) so it only takes the space its text needs —
+ * when there's no status to show, it drops out of the layout entirely
+ * (see the :empty rule below) and the icons get the room instead. */
 .status-mini {
   display: none;
-  flex: 1;
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -99,9 +102,8 @@ html, body {
 }
 .icon-btn.loading { animation: pulse 1.2s ease-in-out infinite; }
 .icon-btn[hidden] { display: none; }
-/* Mobile-only buttons: the collapse chevron and the compact find button
- * (desktop keeps the full-width "Find the middle" button instead). */
-#panel-toggle,
+/* Mobile-only: the compact find button (desktop keeps the full-width
+ * "Find the middle" button instead). */
 #find-mini { display: none; }
 
 .panel-header {
@@ -507,31 +509,116 @@ html, body {
   line-height: 1.7;
 }
 
-.leaflet-control-zoom a,
-.locate-btn {
+.leaflet-control-zoom a {
   background: var(--surface);
   color: var(--ink);
   border-color: var(--line);
 }
-.leaflet-control-zoom a:hover,
-.locate-btn:hover { background: var(--line); }
-.locate-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.locate-btn svg {
-  width: 15px;
-  height: 15px;
-}
+.leaflet-control-zoom a:hover { background: var(--line); }
 .leaflet-control-attribution {
   background: rgba(9, 20, 19, 0.8);
   color: var(--muted);
 }
 .leaflet-control-attribution a { color: var(--muted); }
 
-/* Phones: the panel becomes a bottom sheet that collapses to a slim bar so
- * the map (and the result pins) stay visible. */
+/* Landscape phones' collapse handle (see the media query below) — hidden
+ * everywhere else. Visible in both the expanded and collapsed states
+ * there, always centred on the card's current height, at the edge that
+ * borders the map.
+ *
+ * The button itself is a generous 24x44 touch target (right at the panel's
+ * edge, so it never reaches as far in as the body content below) — only
+ * the ::after is the slim visible pill. A hit box the same size as the
+ * pill was too easy to miss, especially with an input field close by. */
+#side-toggle {
+  display: none;
+  position: absolute;
+  top: 50%;
+  right: 0;
+  transform: translateY(-50%);
+  width: 24px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+#side-toggle::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  width: 4px;
+  height: 36px;
+  border-radius: 2px;
+  background: var(--line);
+}
+#side-toggle:hover::after,
+#side-toggle:focus-visible::after { background: var(--accent); }
+
+/* Compact-mobile behaviour shared by portrait (bottom sheet) and landscape
+ * (left dock) phones — see the two breakpoint-specific blocks below for
+ * positioning, and main.js for how .panel.collapsed gets toggled (tapping
+ * the header, always; landscape also gets a dedicated handle once the
+ * header itself is hidden — see #side-toggle above). Neither orientation
+ * ever falls back to the always-expanded desktop layout. */
+@media (max-width: 640px), (max-height: 500px) and (pointer: coarse) {
+  /* No room for the "in the middle" wordmark alongside a full icon
+   * toolbar — the icons carry the UI on phones, expanded or not. */
+  .panel-header h1 { display: none; }
+  .tagline,
+  .credits { display: none; }
+
+  /* Tapping the header (outside its own buttons/popovers) toggles the
+   * sheet. With no wordmark and a full-width icon row (space-between
+   * packs icons flush to both edges, no blank margin), the row alone
+   * isn't reliably tappable — this strip above it always is. Comfortable
+   * spacing between the grabber and the icons below it matters here: too
+   * close together and it's easy to miss the icon you meant to hit. */
+  .panel-header {
+    cursor: pointer;
+    padding-top: 20px;
+  }
+  .panel-header::before {
+    content: "";
+    position: absolute;
+    top: 5px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 36px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--line);
+  }
+
+  /* The title bar is a full icon toolbar on phones: tabs, search, locate,
+   * find, share, help. The big find button is redundant there. */
+  #find-mini { display: flex; }
+  #find { display: none; }
+  #room-ui,
+  #classic-ui { margin-top: 10px; }
+
+  /* #side-toggle is exempted so the landscape block below can show it
+   * while collapsed (its own rule there would otherwise lose to this
+   * one on specificity, and end up hidden). */
+  .panel.collapsed > :not(.panel-header):not(#side-toggle) { display: none; }
+  .panel.collapsed .status-mini { display: block; }
+  /* Nothing to say right now — let the icons use the space instead of
+   * reserving a slot for an empty status. */
+  .panel.collapsed .status-mini:empty { display: none; }
+
+  /* iOS/Android auto-zoom the whole page when a focused input's font-size
+   * is under 16px, and the zoom sticks after typing — that's what made the
+   * card look "uncentred" with icons cropped off. 16px avoids it. */
+  .field input,
+  #depart {
+    font-size: 16px;
+  }
+}
+
+/* Portrait phones: the panel becomes a bottom sheet that collapses to a
+ * slim bar so the map (and the result pins) stay visible. */
 @media (max-width: 640px) {
   .panel {
     top: auto;
@@ -547,20 +634,56 @@ html, body {
     border-bottom: 0;
     padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
   }
-  .panel-header h1 { font-size: 16px; }
-  .tagline,
-  .credits { display: none; }
-  #panel-toggle { display: flex; }
+}
 
-  /* The title bar is a full icon toolbar on phones: tabs, find, share,
-   * help. The big find button is redundant there. */
-  #find-mini { display: flex; }
-  #find { display: none; }
-  #room-ui,
-  #classic-ui { margin-top: 10px; }
+/* Phones in landscape: short on height but wide, so a full-width bottom
+ * sheet would eat most of the screen — dock to the left edge instead.
+ * Matched on short height + a touch pointer rather than width, since
+ * landscape phones are often wider than the portrait breakpoint above.
+ *
+ * Expanded: a normal-looking card pinned top-left, same as this rule set.
+ * Collapsed (below): minimising shrinks its WIDTH, not its height — it
+ * docks left-to-right, so that's the axis that should shrink, unlike the
+ * bottom sheet's short-vs-tall. Both states share the same `top: 0`, so
+ * toggling between them never shifts the card up or down. */
+@media (max-height: 500px) and (pointer: coarse) {
+  .panel {
+    top: 0;
+    left: 0;
+    right: auto;
+    bottom: auto;
+    width: min(340px, 88vw);
+    max-width: none;
+    max-height: 100vh;
+    border-radius: 0 16px 16px 0;
+    border-top: 0;
+    border-left: 0;
+    border-bottom: 0;
+    /* Extra right-hand room (vs. the usual 16px) so body content — the
+     * address input especially — doesn't sit right up against #side-toggle,
+     * which lives in that margin at the card's edge. */
+    padding: 12px 30px 12px calc(16px + env(safe-area-inset-left));
+  }
 
-  .panel.collapsed > :not(.panel-header) { display: none; }
-  .panel.collapsed .status-mini { display: block; }
-  /* Collapsed: icons only. */
-  .panel.collapsed h1 { display: none; }
+  /* The card is left-docked here: the collapse handle moves off the
+   * header (which the shared block centres top-center, for the bottom
+   * sheet) onto its own element instead, positioned relative to the whole
+   * card so it stays put — vertically centred, right at the edge that
+   * borders the map — whichever state the card is currently in. Visible
+   * in both states: unlike portrait, the header (with its icon row) is
+   * hidden entirely while collapsed, so it's the only affordance there is. */
+  .panel-header::before { display: none; }
+  #side-toggle { display: block; }
+
+  /* A slim tab hugging the edge instead of a short full-width bar.
+   * Everything but the handle hides, header included: there's no room to
+   * show icons at this width. */
+  .panel.collapsed {
+    width: 28px;
+    height: min(220px, 65vh);
+    max-height: min(220px, 65vh);
+    padding: 0;
+  }
+  .panel.collapsed .panel-header { display: none; }
+  .panel.collapsed #side-toggle { display: block; }
 }
