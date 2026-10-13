@@ -88,10 +88,11 @@ async function locateMe() {
     { enableHighAccuracy: false, timeout: 15000, maximumAge: 60000 }
   );
 }
-L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+// OpenFreeMap: free vector tiles, no API key (CARTO now requires one off localhost).
+L.maplibreGL({
+  style: "https://tiles.openfreemap.org/styles/dark",
   attribution:
-    '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-  maxZoom: 19,
+    '<a href="https://openfreemap.org" target="_blank">OpenFreeMap</a> &copy; <a href="https://www.openmaptiles.org/" target="_blank">OpenMapTiles</a> Data from <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>',
 }).addTo(map);
 
 function pinIcon(label, color) {
