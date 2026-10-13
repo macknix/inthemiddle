@@ -11,3 +11,7 @@ __pycache__/
 .vscode/
 .DS_Store
 app.log
+.claude
+node_modules/
+.wrangler/
+worker-configuration.d.ts

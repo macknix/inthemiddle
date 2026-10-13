@@ -1,166 +1,143 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Meet in the Middle</title>
-    <link rel="stylesheet" href="styles/main.css">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>in the middle</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <!-- Absolute paths: this page is also served at /r/<room-id>. -->
+  <link rel="stylesheet" href="/styles/main.css" />
 </head>
 <body>
-    <div class="header">
-        <h1>🗺️ Meet in the Middle</h1>
-    </div>
-    
-    <div class="container">
-    <div class="sidebar">
-            
-            <form id="searchForm">
-                <div class="input-group">
-                    <label for="address1">📍 First Address <span id="locationStatus" style="font-size: 12px; color: #666;"></span></label>
-                    <input type="text" id="address1" placeholder="Detecting your location..." required>
-                </div>
-                
-                <div class="input-group">
-                    <label for="address2">📍 Second Address</label>
-                    <input type="text" id="address2" placeholder="Start typing for suggestions..." required>
-                </div>
-                
-                <button type="submit" class="search-btn" id="searchBtn">
-                    🚇 Find Meeting Point
-                </button>
-            </form>
-            
-            <div class="business-filters" id="businessFilters" style="display: none;">
-                <h4>🏪 Business Filters</h4>
-                <div class="filter-group">
-                    <label class="filter-checkbox">
-                        <input type="checkbox" value="restaurant" checked> 🍽️ Restaurants
-                    </label>
-                    <label class="filter-checkbox">
-                        <input type="checkbox" value="cafe" checked> ☕ Cafes
-                    </label>
-                    <label class="filter-checkbox">
-                        <input type="checkbox" value="bar" checked> 🍺 Bars
-                    </label>
-                    <label class="filter-checkbox">
-                        <input type="checkbox" value="shopping_mall" checked> 🛍️ Shopping
-                    </label>
-                    <label class="filter-checkbox">
-                        <input type="checkbox" value="store" checked> 🏪 Stores
-                    </label>
-                    <label class="filter-checkbox">
-                        <input type="checkbox" value="park" checked> 🌳 Parks
-                    </label>
-                    <label class="filter-checkbox">
-                        <input type="checkbox" value="tourist_attraction" checked> 🎯 Attractions
-                    </label>
-                    <label class="filter-checkbox">
-                        <input type="checkbox" value="gym" checked> 💪 Gyms
-                    </label>
-                    <label class="filter-checkbox">
-                        <input type="checkbox" value="library" checked> 📚 Libraries
-                    </label>
-                </div>
-                <button class="filter-apply-btn" onclick="applyFilters()">Apply Filters</button>
-                <div class="business-count" style="margin-top: 10px; font-size: 12px; color: #666; text-align: center;">
-                    No businesses displayed
-                </div>
-            </div>
+  <div id="map"></div>
 
-            <div id="results"></div>
+  <!-- Starts collapsed in the markup itself, not via JS after load, so
+       phones never flash the expanded layout before snapping shut — see
+       styles/main.css for what .collapsed actually does (nothing on
+       desktop; the CSS only reacts to it inside the phone breakpoints). -->
+  <aside class="panel collapsed">
+    <header class="panel-header">
+      <div class="title-row">
+        <h1>in the middle</h1>
+        <span class="status-mini" id="status-mini" aria-hidden="true"></span>
+        <div class="mode-tabs" role="tablist">
+          <button id="mode-room" class="active" role="tab" aria-selected="true"
+                  aria-label="Shared room" title="Shared room — invite people with a link">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+            </svg>
+          </button>
+          <button id="mode-classic" role="tab" aria-selected="false"
+                  aria-label="Manual" title="Manual — type 2–5 addresses yourself">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
+            </svg>
+          </button>
         </div>
-        
-        <div class="map-container">
-            <div class="maps-container single-map" id="mapsContainer">
-                <div id="map"></div>
-            </div>
+        <button id="search-btn" class="icon-btn" aria-label="Enter an address" title="Type an address">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/>
+          </svg>
+        </button>
+        <button id="locate-btn" class="icon-btn" aria-label="Use my location" title="Use my location">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="8"/>
+            <line x1="12" y1="1" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="23"/>
+            <line x1="1" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="23" y2="12"/>
+          </svg>
+        </button>
+        <button id="find-mini" class="icon-btn" aria-label="Find the middle" title="Find the middle" disabled>
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="9" cy="12" r="7"/><circle cx="15" cy="12" r="7"/>
+          </svg>
+        </button>
+        <button id="share-btn" class="icon-btn" aria-label="Share room link" title="Share room link"
+                aria-haspopup="true" aria-expanded="false">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7"/>
+            <polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/>
+          </svg>
+        </button>
+        <button id="help-toggle" class="icon-btn" aria-label="How to use" aria-expanded="false">?</button>
+      </div>
+      <p class="tagline">the fair place to meet, measured by transit time</p>
+      <!-- Fallback menu when the browser has no native share sheet. -->
+      <div class="share-menu" id="share-menu" hidden>
+        <a id="share-whatsapp" target="_blank" rel="noopener">WhatsApp</a>
+        <a id="share-email">Email</a>
+        <button id="share-copy" type="button">Copy link</button>
+      </div>
+      <div class="help-popover" id="help-popover" hidden>
+        <ul id="help-room">
+          <li>This page is a <strong>room</strong> — hit the <strong>share button</strong> (the arrow) to send or copy the link. Everyone who opens it joins this map with their own pin and a randomly generated name.</li>
+          <li>Set where you're coming from: tap the <strong>magnifying glass</strong> to type an address, tap the map, drag your pin, or hit the <strong>crosshair</strong> to use your current location. If your browser says location is blocked, allow it from the address bar's ⓘ/padlock icon (Site settings → Location) and reload.</li>
+          <li>Once two or more people have pins, hit <strong>find the middle</strong> (the overlapping circles) — everyone sees the same results. Tap a numbered pin for each person's route and times.</li>
+          <li>The tabs at the top: <strong>the people icon</strong> is this shared room; <strong>the pin icon</strong> is manual mode — type 2–5 addresses yourself, no sharing involved.</li>
+          <li><strong>Options</strong> changes the max travel time and departure time.</li>
+        </ul>
+        <ul id="help-classic" hidden>
+          <li><strong>Manual mode:</strong> enter 2–5 starting points yourself — tap the <strong>magnifying glass</strong> or the <strong>crosshair</strong> to fill the next empty address, or tap the map. <strong>+ Add another address</strong> for more people; drag pins to adjust.</li>
+          <li>Hit <strong>find the middle</strong> (the overlapping circles), then tap a numbered pin for each person's route and times.</li>
+          <li>The tabs at the top: <strong>the people icon</strong> switches back to the shared room (invite friends with a link); <strong>the pin icon</strong> is this manual mode.</li>
+          <li><strong>Options</strong> changes the max travel time and departure time.</li>
+        </ul>
+      </div>
+    </header>
+
+    <!-- Landscape phones only: a dedicated collapse/expand handle centred
+         on the card's actual height (see styles/main.css and main.js). -->
+    <button id="side-toggle" aria-label="Expand or collapse the panel" aria-expanded="false"></button>
+
+    <section id="room-ui">
+      <div class="inputs">
+        <div class="field">
+          <span class="pin-dot" id="pin-dot-you"></span>
+          <input type="text" id="input-you" placeholder="Your starting point" autocomplete="off" />
+          <div class="suggestions" id="suggestions-you"></div>
         </div>
+      </div>
+      <ul class="participants" id="participants"></ul>
+    </section>
+
+    <section id="classic-ui" hidden>
+      <div class="inputs" id="manual-fields"></div>
+      <button id="add-address" class="add-address" type="button">+ Add another address</button>
+    </section>
+
+    <div class="controls">
+      <details class="advanced">
+        <summary>Options</summary>
+        <label class="control-label" for="budget">Max travel time each: <strong id="budget-label">60 min</strong></label>
+        <input type="range" id="budget" min="20" max="90" step="5" value="60" />
+        <label class="control-label" for="depart">Leave at</label>
+        <input type="datetime-local" id="depart" />
+      </details>
     </div>
 
-    <!-- Global loading overlay -->
-    <div id="global-loading-overlay" style="display:none;" role="dialog" aria-modal="true" aria-hidden="true">
-        <div class="loading-modal">
-            <div class="spinner-wrap">
-                <div class="spinner-ring"></div>
-            </div>
-            <div class="loading-text">Finding the optimal meeting point…</div>
-        </div>
-    </div>
+    <button id="find" disabled>Find the middle</button>
+    <p class="status" id="status"></p>
 
-    <!-- Bootstrap: detect API base, load app and Google Maps -->
-    <script>
-        (function bootstrap() {
-            // Try same-origin first; API server sets CORS for browser use
-            const defaultCandidates = [
-                // Common local dev ports first (most likely to succeed during dev)
-                'http://localhost:5001/api/config',
-                'http://127.0.0.1:5001/api/config',
-                'http://localhost:5000/api/config',
-                'http://127.0.0.1:5000/api/config',
-                // Same-origin relative (works when served behind a proxy)
-                '/api/config'
-            ];
+    <footer class="credits">
+      Routing <a href="https://transitous.org" target="_blank" rel="noopener">Transitous / MOTIS</a>
+      · Data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors
+    </footer>
+  </aside>
 
-            async function discoverConfig(urls) {
-                for (const url of urls) {
-                    try {
-                        const resp = await fetch(url, { credentials: 'omit' });
-                        if (resp && resp.ok) {
-                            console.log('[Bootstrap] Config endpoint:', url);
-                            return await resp.json();
-                        } else {
-                            console.warn('[Bootstrap] Config not OK at', url, resp && resp.status);
-                        }
-                    } catch (e) {
-                        console.warn('[Bootstrap] Config fetch failed at', url, e && e.message);
-                    }
-                }
-                throw new Error('All config endpoints failed');
-            }
-
-            discoverConfig(defaultCandidates)
-                .then(config => {
-                    if (!config || !config.success || !config.data) throw new Error('Bad config payload');
-                    var base = (config.data.apiBaseUrl || '').replace(/\/$/, '');
-                    if (base) {
-                        window.API_BASE = base;
-                    }
-                        if (typeof config.data.showRouteSamples !== 'undefined') {
-                            window.SHOW_ROUTE_SAMPLES = !!config.data.showRouteSamples;
-                        }
-                    // Load main app script next so it can read window.API_BASE
-                    var app = document.createElement('script');
-                        app.src = 'scripts/main.js?v=21';
-                    // For dynamically inserted scripts, set async=false to ensure execution before onload
-                    app.async = false;
-                    app.onload = function() {
-                        if (window.setApiBase && window.API_BASE) {
-                            window.setApiBase(window.API_BASE);
-                        }
-                        // Load Google Maps only after main.js has executed (window.initMaps available)
-                        if (config.data.googleMapsApiKey) {
-                            var gms = document.createElement('script');
-                            gms.async = true;
-                            gms.src = 'https://maps.googleapis.com/maps/api/js?key=' +
-                                encodeURIComponent(config.data.googleMapsApiKey) +
-                                '&libraries=geometry,places&loading=async&v=weekly&callback=initMaps';
-                            gms.onerror = function() {
-                                console.error('Failed to load Google Maps API');
-                                document.body.insertAdjacentHTML('beforeend', '<div style="position: fixed; top: 10px; right: 10px; background: #f44336; color: white; padding: 10px; border-radius: 4px;">❌ Google Maps API failed to load</div>');
-                            };
-                            document.head.appendChild(gms);
-                        } else {
-                            console.error('Google Maps API key not available');
-                            document.body.insertAdjacentHTML('beforeend', '<div style="position: fixed; top: 10px; right: 10px; background: #ff9800; color: white; padding: 10px; border-radius: 4px;">⚠️ Google Maps API key not configured</div>');
-                        }
-                    };
-                    document.head.appendChild(app);
-                })
-                .catch(err => {
-                    console.error('Failed to get configuration:', err);
-                    document.body.insertAdjacentHTML('beforeend', '<div style="position: fixed; top: 10px; right: 10px; background: #f44336; color: white; padding: 10px; border-radius: 4px;">❌ Failed to connect to API server</div>');
-                });
-        })();
-    </script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <script src="https://unpkg.com/@maplibre/maplibre-gl-leaflet@0.0.22/leaflet-maplibre-gl.js"></script>
+  <script src="/scripts/main.js"></script>
 </body>
 </html>
