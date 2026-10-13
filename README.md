@@ -40,8 +40,14 @@ static assets and provisions the `middle.macknixon.com` custom domain.
 npm install
 npm run dev              # Worker + Durable Object locally → :8787
 npm run check            # tsc --noEmit
-npm run deploy           # → middle.macknixon.com
+npm run deploy           # manual deploy (emergencies only)
 ```
+
+Normally, deploys run through GitHub: `.github/workflows/deploy.yml` runs the
+Python suite and the Worker type-check on every PR, and on a merge to `main`
+deploys to middle.macknixon.com. `main` is therefore always what's live. It
+needs repo secrets `CLOUDFLARE_API_TOKEN` (an "Edit Cloudflare Workers" token)
+and `CLOUDFLARE_ACCOUNT_ID`, both from the Me@macknixon.com account.
 
 When changing the API, change `server/` and `worker/` together and keep the
 responses identical; the Python suite is the behavioural reference.
