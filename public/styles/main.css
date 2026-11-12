@@ -2,25 +2,28 @@
   /* Palette: https://colorhunt.co/palette/091413285a48408a71b0e4cc */
   --bg: #091413;
   --surface: #0e201c;
+  --surface-2: #15302a;
   --ink: #b0e4cc;
-  --muted: #6fa28e;
+  --muted: #7fb09c;
   --line: #285a48;
   --accent: #408a71;
   --accent-strong: #b0e4cc;
-  --spot: #408a71;
-  --radius: 14px;
+  --error: #ff9b8a;
+  --radius: 16px;
   --shadow: 0 10px 40px rgba(0, 0, 0, 0.55);
   font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 
 html, body {
   margin: 0;
   height: 100%;
   color: var(--ink);
   background: var(--bg);
+  -webkit-tap-highlight-color: transparent;
 }
 
 #map {
@@ -30,6 +33,10 @@ html, body {
   background: var(--bg);
 }
 
+svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ---------- panel (desktop: floating card) ---------- */
+
 .panel {
   position: fixed;
   top: 16px;
@@ -37,9 +44,9 @@ html, body {
   z-index: 1000;
   width: 360px;
   max-height: calc(100vh - 32px);
-  max-width: calc(100vw - 32px);
   display: flex;
   flex-direction: column;
+  gap: 14px;
   background: var(--bg);
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -48,270 +55,304 @@ html, body {
   overflow-y: auto;
 }
 
+.panel-header { position: relative; }
+
 .title-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  gap: 10px;
 }
-
-/* One-line status shown in the title bar while the panel is collapsed.
- * flex: 0 1 auto (not 1) so it only takes the space its text needs —
- * when there's no status to show, it drops out of the layout entirely
- * (see the :empty rule below) and the icons get the room instead. */
-.status-mini {
-  display: none;
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  text-align: right;
-  font-size: 11px;
-  color: var(--muted);
-}
-.status-mini.error { color: #ff9b8a; }
-
-/* Round icon buttons in the title bar (share, help, collapse). */
-.icon-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  flex: none;
-  padding: 0;
-  border-radius: 50%;
-  border: 1px solid var(--line);
-  background: var(--surface);
-  color: var(--muted);
-  font: inherit;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  line-height: 1;
-}
-.icon-btn:hover,
-.icon-btn[aria-expanded="true"] {
+.title-row h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
   color: var(--accent-strong);
-  border-color: var(--accent);
-}
-.icon-btn:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-.icon-btn.loading { animation: pulse 1.2s ease-in-out infinite; }
-.icon-btn[hidden] { display: none; }
-/* Mobile-only: the compact find button (desktop keeps the full-width
- * "Find the middle" button instead). */
-#find-mini { display: none; }
-
-.panel-header {
-  position: relative;
+  white-space: nowrap;
 }
 
-.panel-header h1 {
+/* Three dashes: which step you're on. */
+.progress {
+  display: flex;
+  gap: 5px;
+  margin: 0 auto 0 0;
+  padding: 0;
+  list-style: none;
+}
+.progress li {
+  width: 18px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--line);
+  transition: background 0.2s;
+}
+.panel[data-step="start"] .progress li:nth-child(1),
+.panel[data-step="people"] .progress li:nth-child(-n + 2),
+.panel[data-step="results"] .progress li { background: var(--accent-strong); }
+
+.grabber { display: none; }
+#side-toggle { display: none; }
+
+.step {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.step h2 {
   margin: 0;
   font-size: 22px;
   font-weight: 700;
   letter-spacing: -0.02em;
   color: var(--accent-strong);
 }
+.step-head,
+.results-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
 
-.tagline {
-  margin: 4px 0 16px;
+.hint {
+  margin: -2px 0 0;
   font-size: 13px;
   color: var(--muted);
+  text-align: center;
 }
 
-/* --- help --- */
+/* ---------- buttons ---------- */
 
-/* Fixed-position (placed by JS) so the panel's scroll overflow can't clip it. */
-.help-popover {
-  position: fixed;
-  z-index: 2000;
-  width: min(340px, calc(100vw - 24px));
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  box-shadow: var(--shadow);
-  padding: 12px 14px;
-  font-size: 13px;
-  line-height: 1.5;
-  max-height: 70vh;
-  overflow-y: auto;
-}
-.help-popover ul {
-  margin: 0;
-  padding-left: 18px;
-}
-.help-popover li + li { margin-top: 6px; }
-.help-popover strong { color: var(--accent-strong); }
+button { font: inherit; }
 
-/* --- mode tabs (compact, in the title bar) --- */
-
-.mode-tabs {
-  display: flex;
-  flex: none;
-  gap: 2px;
-  padding: 2px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 9px;
-}
-.mode-tabs button {
+.primary,
+.secondary {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 20px;
-  padding: 0;
-  font: inherit;
-  color: var(--muted);
-  background: none;
-  border: 0;
-  border-radius: 7px;
+  gap: 10px;
+  width: 100%;
+  border-radius: 14px;
+  font-weight: 600;
   cursor: pointer;
+  transition: background 0.15s, opacity 0.15s, border-color 0.15s;
 }
-.mode-tabs svg {
-  display: block;
-  width: 14px;
-  height: 14px;
-}
-.mode-tabs button:hover { color: var(--ink); }
-.mode-tabs button.active {
+.primary {
+  min-height: 52px;
+  padding: 0 16px;
+  font-size: 16px;
   color: var(--bg);
-  background: var(--accent);
+  background: var(--accent-strong);
+  border: 0;
 }
-
-/* --- room sharing --- */
-
-/* Fixed-position (placed by JS) so the panel's scroll overflow can't clip it. */
-.share-menu {
-  position: fixed;
-  z-index: 2000;
-  min-width: 140px;
+.primary svg { width: 20px; height: 20px; stroke-width: 2.2; }
+.primary:hover:not(:disabled) { background: #d2f3e3; }
+.primary:disabled { opacity: 0.35; cursor: default; }
+.primary.loading { animation: pulse 1.2s ease-in-out infinite; }
+/* Blocked location: still tappable (it explains how to fix it), but quiet. */
+.primary.blocked {
+  color: var(--ink);
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 10px;
-  box-shadow: var(--shadow);
-  overflow: hidden;
-  padding: 4px;
 }
-.share-menu a,
-.share-menu button {
-  display: block;
-  width: 100%;
-  padding: 8px 10px;
-  font: inherit;
-  font-size: 13px;
-  text-align: left;
-  text-decoration: none;
+
+.secondary {
+  min-height: 48px;
+  padding: 0 12px;
+  font-size: 15px;
   color: var(--ink);
-  background: none;
-  border: 0;
-  border-radius: 7px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+.secondary svg { width: 16px; height: 16px; }
+.secondary:hover:not(:disabled) { border-color: var(--accent); }
+.secondary:disabled { opacity: 0.4; cursor: default; }
+
+.pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
   cursor: pointer;
 }
-.share-menu a:hover,
-.share-menu button:hover { background: rgba(64, 138, 113, 0.2); }
+.chip svg { width: 14px; height: 14px; }
+.chip:hover { border-color: var(--accent); }
 
-.participants {
-  list-style: none;
-  margin: 2px 0 0;
-  padding: 0;
-  font-size: 12px;
-}
-.participants li {
+.options {
   display: flex;
-  align-items: center;
+  justify-content: center;
   gap: 8px;
-  padding: 5px 2px;
+  margin-top: -2px;
 }
-.participants li.unlocated { opacity: 0.6; }
-.p-dot {
-  flex: none;
-  width: 10px;
-  height: 10px;
+.options .chip { color: var(--muted); font-weight: 500; }
+
+/* Invisible native input covering the chip: a tap opens its picker. */
+.date-chip input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  font-size: 16px; /* no iOS zoom-on-focus */
+}
+.date-chip:focus-within { border-color: var(--accent); }
+
+@keyframes pulse { 50% { opacity: 0.6; } }
+
+/* Busy primary buttons: a soft sheen sweeps across instead of blinking. */
+.primary.loading,
+.primary.loading:disabled {
+  opacity: 1;
+  cursor: progress;
+  background: linear-gradient(
+      105deg,
+      transparent 35%,
+      rgba(255, 255, 255, 0.55) 50%,
+      transparent 65%
+    )
+    var(--accent-strong);
+  background-size: 250% 100%;
+  background-repeat: no-repeat;
+  animation: sheen 1.8s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+@keyframes sheen {
+  from { background-position: 130% 0; }
+  to { background-position: -30% 0; }
+}
+/* The find icon's two circles drift together and apart: meeting. */
+#find.loading circle { animation: meet-l 1.8s cubic-bezier(0.45, 0, 0.55, 1) infinite; }
+#find.loading circle + circle { animation-name: meet-r; }
+@keyframes meet-l { 50% { transform: translateX(2.5px); } }
+@keyframes meet-r { 50% { transform: translateX(-2.5px); } }
+
+/* ---------- search animation on the map ---------- */
+
+.seek-fx {
+  opacity: 0;
+  transition: opacity 0.45s ease;
+}
+.seeking .seek-fx { opacity: 1; }
+
+/* Dotted lines that flow from each pin towards the centre. */
+.seek-line { animation: seek-flow 0.9s linear infinite; }
+@keyframes seek-flow { to { stroke-dashoffset: -12; } }
+
+/* Two staggered rings per pin, expanding and fading. */
+.ripple { position: relative; }
+.ripple i {
+  position: absolute;
+  left: -36px;
+  top: -36px;
+  width: 72px;
+  height: 72px;
   border-radius: 50%;
+  border: 2px solid var(--c);
+  opacity: 0;
+  will-change: transform, opacity;
+  animation: ripple 2.4s cubic-bezier(0.2, 0.6, 0.35, 1) infinite;
+  animation-delay: var(--d);
 }
-.p-name { font-weight: 600; }
-.p-where {
-  color: var(--muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.ripple i + i { animation-delay: calc(var(--d) + 1.2s); }
+@keyframes ripple {
+  0% { transform: scale(0.15); opacity: 0.75; }
+  100% { transform: scale(1.5); opacity: 0; }
 }
 
-/* --- inputs --- */
+/* A small glow breathing at the centre, with a ring easing outwards. */
+.seek-core {
+  position: absolute;
+  left: -6px;
+  top: -6px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--accent-strong);
+  box-shadow: 0 0 12px 2px rgba(176, 228, 204, 0.5);
+  animation: breathe 1.8s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+.seek-core::after {
+  content: "";
+  position: absolute;
+  inset: -10px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(176, 228, 204, 0.6);
+  animation: ripple 1.8s cubic-bezier(0.2, 0.6, 0.35, 1) infinite;
+}
+@keyframes breathe { 50% { transform: scale(0.75); } }
 
-.inputs .field {
+@media (prefers-reduced-motion: reduce) {
+  .primary.loading,
+  #find.loading circle,
+  .seek-line,
+  .ripple i,
+  .seek-core,
+  .seek-core::after { animation: none; }
+  .ripple i { opacity: 0.35; transform: scale(0.8); }
+}
+
+/* ---------- inputs ---------- */
+
+.field {
   position: relative;
   display: flex;
   align-items: center;
-  margin-bottom: 8px;
 }
-
-.pin-dot {
+.field > svg {
   position: absolute;
-  left: 12px;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-}
-.remove-address {
-  position: absolute;
-  right: 8px;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  font: inherit;
-  font-size: 15px;
-  line-height: 1;
+  left: 14px;
+  width: 16px;
+  height: 16px;
   color: var(--muted);
-  background: none;
-  border: 0;
-  border-radius: 50%;
-  cursor: pointer;
+  pointer-events: none;
 }
-.remove-address:hover {
-  color: var(--ink);
-  background: rgba(64, 138, 113, 0.25);
-}
-
-.add-address {
-  width: 100%;
-  margin-bottom: 8px;
-  padding: 9px 10px;
-  font: inherit;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--muted);
-  background: none;
-  border: 1px dashed var(--line);
-  border-radius: 10px;
-  cursor: pointer;
-}
-.add-address:hover {
-  color: var(--accent-strong);
-  border-color: var(--accent);
-}
-
 .field input {
   width: 100%;
-  padding: 10px 12px 10px 32px;
+  min-height: 48px;
+  padding: 0 14px 0 40px;
   font: inherit;
-  font-size: 14px;
+  font-size: 16px; /* under 16px, phones zoom the page on focus */
   color: var(--ink);
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 14px;
   outline: none;
 }
 .field input::placeholder { color: var(--muted); }
 .field input:focus { border-color: var(--accent); }
-/* Leave room for the × remove button on manual address rows. */
-#manual-fields .field input { padding-right: 34px; }
+#add-field input { padding-right: 48px; }
+
+.field-x {
+  position: absolute;
+  right: 2px;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+.field-x:hover { color: var(--ink); }
 
 .suggestions {
   position: absolute;
@@ -319,135 +360,224 @@ html, body {
   left: 0;
   right: 0;
   z-index: 20;
+  display: none;
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 12px;
   box-shadow: var(--shadow);
   overflow: hidden;
-  display: none;
 }
 .suggestions.open { display: block; }
-
 .suggestions button {
   display: block;
   width: 100%;
-  padding: 9px 12px;
-  font: inherit;
-  font-size: 13px;
+  min-height: 44px;
+  padding: 9px 14px;
+  font-size: 14px;
   text-align: left;
   color: var(--ink);
   background: none;
   border: 0;
   cursor: pointer;
 }
+.suggestions button + button { border-top: 1px solid rgba(40, 90, 72, 0.5); }
 .suggestions button:hover { background: rgba(64, 138, 113, 0.2); }
-.suggestions .sub { color: var(--muted); font-size: 11px; }
-
-/* --- controls --- */
-
-.control-label {
+.suggestions .sub {
   display: block;
-  font-size: 12px;
-  font-weight: 600;
   color: var(--muted);
-  margin: 10px 0 6px;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-#depart {
-  width: 100%;
-  padding: 9px 10px;
-  font: inherit;
-  font-size: 14px;
-  color: var(--ink);
-  border: 1px solid var(--line);
-  border-radius: 10px;
+/* ---------- people ---------- */
+
+.people {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.person {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 52px;
+  padding: 8px 4px 8px 12px;
+  border-radius: 12px;
   background: var(--surface);
 }
-
-.advanced { margin-top: 8px; }
-.advanced summary {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--muted);
-  cursor: pointer;
-}
-.advanced summary:hover { color: var(--ink); }
-#budget { width: 100%; accent-color: var(--accent); }
-
-/* --- action --- */
-
-#find {
-  margin-top: 14px;
-  padding: 12px;
-  width: 100%;
-  font: inherit;
-  font-size: 15px;
-  font-weight: 600;
+.person.editable { cursor: pointer; }
+.person.editable:hover { background: var(--surface-2); }
+.person.waiting { opacity: 0.6; }
+.avatar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
   color: var(--bg);
-  background: var(--accent);
-  border: 0;
-  border-radius: 10px;
-  cursor: pointer;
-  transition: opacity 0.15s, background 0.15s;
+  font-size: 11px;
+  font-weight: 700;
 }
-#find:hover:not(:disabled) { background: var(--accent-strong); }
-#find:disabled { opacity: 0.45; cursor: default; }
-#find.loading { animation: pulse 1.2s ease-in-out infinite; }
-
-@keyframes pulse {
-  50% { opacity: 0.6; }
+.who {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
-
-.status {
-  margin: 10px 0 0;
+.who strong { font-size: 14px; }
+.who span {
   font-size: 13px;
   color: var(--muted);
-  min-height: 18px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.status.error { color: #ff9b8a; }
-
-/* --- result popups (shown on the map's numbered pins) --- */
-
-.result-times {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  font-size: 12px;
+.remove {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
   color: var(--muted);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
 }
-.leg-chip {
-  display: inline-block;
-  padding: 1px 7px;
-  border-radius: 6px;
-  background: rgba(176, 228, 204, 0.14);
-  color: var(--accent-strong);
+.remove:hover { color: var(--ink); }
+
+/* ---------- results ---------- */
+
+.results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.result {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 52px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid transparent;
+  background: var(--surface);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+.result:hover { border-color: var(--line); }
+.results li.active .result { border-color: var(--accent); }
+.rank {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--bg);
+  font-size: 13px;
+  font-weight: 700;
+}
+.results li:first-child .rank { background: var(--accent-strong); }
+.r-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 15px;
   font-weight: 600;
-  margin-right: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
+.r-times {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.r-times .unit { font-size: 12px; font-weight: 500; color: var(--muted); }
+
+/* ---------- status, share menu, credits ---------- */
+
+.status {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--muted);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+.status:empty { display: none; }
+.status.error { color: var(--error); }
+
+.share-menu {
+  position: fixed;
+  z-index: 2000;
+  min-width: 160px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+.share-menu a,
+.share-menu button {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 12px;
+  font-size: 14px;
+  text-align: left;
+  text-decoration: none;
+  color: var(--ink);
+  background: none;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.share-menu a:hover,
+.share-menu button:hover { background: rgba(64, 138, 113, 0.2); }
 
 .credits {
   margin-top: auto;
-  padding-top: 14px;
   font-size: 11px;
   color: var(--muted);
 }
 .credits a { color: inherit; }
 
-/* --- map markers --- */
+/* ---------- map markers + popups ---------- */
 
 .marker-pin {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   border-radius: 50% 50% 50% 0;
   transform: rotate(-45deg);
   border: 2px solid var(--bg);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
   color: var(--bg);
   font-weight: 700;
-  font-size: 11px; /* fits two-letter initials ("SO" for Sunny Otter) */
+  font-size: 10px;
   letter-spacing: -0.02em;
 }
 .marker-pin span { transform: rotate(45deg); }
@@ -456,29 +586,31 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
-  background: var(--spot);
+  background: var(--accent);
   border: 2px solid var(--accent-strong);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
   color: var(--bg);
   font-weight: 700;
-  font-size: 12px;
+  font-size: 13px;
+  transition: transform 0.15s;
 }
 .marker-spot.rank-1 {
-  width: 34px;
-  height: 34px;
-  font-size: 15px;
+  width: 36px;
+  height: 36px;
+  font-size: 16px;
   background: var(--accent-strong);
+  border-color: var(--bg);
 }
+.marker-spot.active { transform: scale(1.2); box-shadow: 0 0 0 4px rgba(176, 228, 204, 0.35); }
 
-/* Leaflet chrome on a dark page */
 .spot-popup .leaflet-popup-content-wrapper {
   background: var(--surface);
   color: var(--ink);
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 14px;
   box-shadow: var(--shadow);
 }
 .spot-popup .leaflet-popup-tip {
@@ -488,25 +620,44 @@ html, body {
 .spot-popup .leaflet-popup-content {
   margin: 12px 14px;
   font-family: inherit;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.5;
 }
-.spot-popup .leaflet-popup-close-button {
+.spot-popup a.leaflet-popup-close-button {
+  width: 36px;
+  height: 36px;
+  font-size: 22px;
+  line-height: 32px;
   color: var(--muted);
-  padding: 6px 8px 0 0;
 }
 .popup-title {
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 15px;
+  font-weight: 700;
   color: var(--accent-strong);
   margin-bottom: 4px;
-  padding-right: 10px;
+  padding-right: 22px;
+}
+.result-times {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--muted);
 }
 .popup-legs {
   margin-top: 8px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
-  line-height: 1.7;
+  line-height: 1.6;
+}
+.popup-legs > div + div { margin-top: 6px; }
+.leg-chip {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 6px;
+  background: rgba(176, 228, 204, 0.14);
+  color: var(--accent-strong);
+  font-weight: 600;
 }
 
 .leaflet-control-zoom a {
@@ -521,69 +672,56 @@ html, body {
 }
 .leaflet-control-attribution a { color: var(--muted); }
 
-/* Landscape phones' collapse handle (see the media query below) — hidden
- * everywhere else. Visible in both the expanded and collapsed states
- * there, always centred on the card's current height, at the edge that
- * borders the map.
- *
- * The button itself is a generous 24x44 touch target (right at the panel's
- * edge, so it never reaches as far in as the body content below) — only
- * the ::after is the slim visible pill. A hit box the same size as the
- * pill was too easy to miss, especially with an input field close by. */
-#side-toggle {
-  display: none;
-  position: absolute;
-  top: 50%;
-  right: 0;
-  transform: translateY(-50%);
-  width: 24px;
-  height: 44px;
-  padding: 0;
-  border: 0;
-  background: none;
-  cursor: pointer;
-}
-#side-toggle::after {
-  content: "";
-  position: absolute;
-  top: 50%;
-  right: 8px;
-  transform: translateY(-50%);
-  width: 4px;
-  height: 36px;
-  border-radius: 2px;
-  background: var(--line);
-}
-#side-toggle:hover::after,
-#side-toggle:focus-visible::after { background: var(--accent); }
-
-/* Compact-mobile behaviour shared by portrait (bottom sheet) and landscape
- * (left dock) phones — see the two breakpoint-specific blocks below for
- * positioning, and main.js for how .panel.collapsed gets toggled (tapping
- * the header, always; landscape also gets a dedicated handle once the
- * header itself is hidden — see #side-toggle above). Neither orientation
- * ever falls back to the always-expanded desktop layout. */
+/* ---------- phones (shared) ----------
+ * Portrait: bottom sheet. Landscape (short + touch): left dock.
+ * Collapsing keeps only the ".peek" bits: the step's heading and its one
+ * main action (or the selected result), so the next move is always
+ * visible while the map gets the room. */
 @media (max-width: 640px), (max-height: 500px) and (pointer: coarse) {
-  /* No room for the "in the middle" wordmark alongside a full icon
-   * toolbar — the icons carry the UI on phones, expanded or not. */
-  .panel-header h1 { display: none; }
-  .tagline,
   .credits { display: none; }
+  .leaflet-control-zoom { display: none; } /* pinch instead */
 
-  /* Tapping the header (outside its own buttons/popovers) toggles the
-   * sheet. With no wordmark and a full-width icon row (space-between
-   * packs icons flush to both edges, no blank margin), the row alone
-   * isn't reliably tappable — this strip above it always is. Comfortable
-   * spacing between the grabber and the icons below it matters here: too
-   * close together and it's easy to miss the icon you meant to hit. */
-  .panel-header {
-    cursor: pointer;
-    padding-top: 20px;
+  .panel { gap: 12px; }
+  .title-row h1 { font-size: 16px; }
+  .step h2 { font-size: 20px; }
+
+  .panel.collapsed .title-row { display: none; }
+  .panel.collapsed .step > :not(.peek):not(.results),
+  .panel.collapsed .results > li:not(.peek) { display: none; }
+}
+
+/* Portrait phones: bottom sheet. */
+@media (max-width: 640px) {
+  .panel {
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    max-height: 75vh;
+    max-height: 75dvh;
+    border-radius: 20px 20px 0 0;
+    border-width: 1px 0 0;
+    padding: 0 16px calc(16px + env(safe-area-inset-bottom));
+    box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.55);
   }
-  .panel-header::before {
+
+  /* The whole strip above the content is the drag-handle target. */
+  .grabber {
+    display: block;
+    position: relative;
+    width: 100%;
+    height: 22px;
+    margin-bottom: 2px;
+    padding: 0;
+    border: 0;
+    background: none;
+    cursor: pointer;
+  }
+  .grabber::after {
     content: "";
     position: absolute;
-    top: 5px;
+    top: 9px;
     left: 50%;
     transform: translateX(-50%);
     width: 36px;
@@ -591,99 +729,68 @@ html, body {
     border-radius: 2px;
     background: var(--line);
   }
-
-  /* The title bar is a full icon toolbar on phones: tabs, search, locate,
-   * find, share, help. The big find button is redundant there. */
-  #find-mini { display: flex; }
-  #find { display: none; }
-  #room-ui,
-  #classic-ui { margin-top: 10px; }
-
-  /* #side-toggle is exempted so the landscape block below can show it
-   * while collapsed (its own rule there would otherwise lose to this
-   * one on specificity, and end up hidden). */
-  .panel.collapsed > :not(.panel-header):not(#side-toggle) { display: none; }
-  .panel.collapsed .status-mini { display: block; }
-  /* Nothing to say right now — let the icons use the space instead of
-   * reserving a slot for an empty status. */
-  .panel.collapsed .status-mini:empty { display: none; }
-
-  /* iOS/Android auto-zoom the whole page when a focused input's font-size
-   * is under 16px, and the zoom sticks after typing — that's what made the
-   * card look "uncentred" with icons cropped off. 16px avoids it. */
-  .field input,
-  #depart {
-    font-size: 16px;
+  .panel-header {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: var(--bg);
+    padding-bottom: 2px;
   }
 }
 
-/* Portrait phones: the panel becomes a bottom sheet that collapses to a
- * slim bar so the map (and the result pins) stay visible. */
-@media (max-width: 640px) {
-  .panel {
-    top: auto;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    width: 100vw;
-    max-width: none;
-    max-height: 58vh;
-    border-radius: 16px 16px 0 0;
-    border-left: 0;
-    border-right: 0;
-    border-bottom: 0;
-    padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
-  }
-}
-
-/* Phones in landscape: short on height but wide, so a full-width bottom
- * sheet would eat most of the screen — dock to the left edge instead.
- * Matched on short height + a touch pointer rather than width, since
- * landscape phones are often wider than the portrait breakpoint above.
- *
- * Expanded: a normal-looking card pinned top-left, same as this rule set.
- * Collapsed (below): minimising shrinks its WIDTH, not its height — it
- * docks left-to-right, so that's the axis that should shrink, unlike the
- * bottom sheet's short-vs-tall. Both states share the same `top: 0`, so
- * toggling between them never shifts the card up or down. */
+/* Landscape phones: dock left; collapse to a slim edge tab. */
 @media (max-height: 500px) and (pointer: coarse) {
   .panel {
     top: 0;
     left: 0;
-    right: auto;
-    bottom: auto;
-    width: min(340px, 88vw);
-    max-width: none;
-    max-height: 100vh;
+    bottom: 0;
+    width: min(340px, 50vw);
+    max-height: none;
     border-radius: 0 16px 16px 0;
-    border-top: 0;
-    border-left: 0;
-    border-bottom: 0;
-    /* Extra right-hand room (vs. the usual 16px) so body content — the
-     * address input especially — doesn't sit right up against #side-toggle,
-     * which lives in that margin at the card's edge. */
-    padding: 12px 30px 12px calc(16px + env(safe-area-inset-left));
+    border-width: 0 1px 0 0;
+    padding: 12px 32px 12px calc(16px + env(safe-area-inset-left));
   }
 
-  /* The card is left-docked here: the collapse handle moves off the
-   * header (which the shared block centres top-center, for the bottom
-   * sheet) onto its own element instead, positioned relative to the whole
-   * card so it stays put — vertically centred, right at the edge that
-   * borders the map — whichever state the card is currently in. Visible
-   * in both states: unlike portrait, the header (with its icon row) is
-   * hidden entirely while collapsed, so it's the only affordance there is. */
-  .panel-header::before { display: none; }
-  #side-toggle { display: block; }
+  /* Generous 24x44 hit area at the card's edge; the ::after is the pill. */
+  #side-toggle {
+    display: block;
+    position: fixed;
+    top: 50%;
+    left: calc(min(340px, 50vw) - 26px);
+    transform: translateY(-50%);
+    z-index: 1001;
+    width: 24px;
+    height: 44px;
+    padding: 0;
+    border: 0;
+    background: none;
+    cursor: pointer;
+  }
+  #side-toggle::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    right: 8px;
+    transform: translateY(-50%);
+    width: 4px;
+    height: 36px;
+    border-radius: 2px;
+    background: var(--line);
+  }
+  #side-toggle:hover::after,
+  #side-toggle:focus-visible::after { background: var(--accent); }
 
-  /* A slim tab hugging the edge instead of a short full-width bar.
-   * Everything but the handle hides, header included: there's no room to
-   * show icons at this width. */
+  /* The transform also makes the tab the handle's containing block, so the
+   * handle's top: 50% / left: 2px land centred on the tab itself. */
   .panel.collapsed {
+    top: 50%;
+    bottom: auto;
+    transform: translateY(-50%);
     width: 28px;
     height: min(220px, 65vh);
-    max-height: min(220px, 65vh);
     padding: 0;
+    overflow: hidden;
   }
-  .panel.collapsed .panel-header { display: none; }
-  .panel.collapsed #side-toggle { display: block; }
+  .panel.collapsed > :not(#side-toggle) { display: none; }
+  .panel.collapsed #side-toggle { left: 2px; }
 }

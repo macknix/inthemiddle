@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#091413" />
   <title>in the middle</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
@@ -15,122 +16,100 @@
 <body>
   <div id="map"></div>
 
-  <!-- Starts collapsed in the markup itself, not via JS after load, so
-       phones never flash the expanded layout before snapping shut — see
-       styles/main.css for what .collapsed actually does (nothing on
-       desktop; the CSS only reacts to it inside the phone breakpoints). -->
-  <aside class="panel collapsed">
+  <!-- One flow, three steps: where you are → who else → the middle.
+       The panel is a bottom sheet on portrait phones, a left dock on
+       landscape phones and a floating card on desktop (styles/main.css). -->
+  <aside class="panel" data-step="start">
     <header class="panel-header">
+      <button id="grabber" class="grabber" type="button" aria-label="Expand or collapse" aria-expanded="true"></button>
       <div class="title-row">
         <h1>in the middle</h1>
-        <span class="status-mini" id="status-mini" aria-hidden="true"></span>
-        <div class="mode-tabs" role="tablist">
-          <button id="mode-room" class="active" role="tab" aria-selected="true"
-                  aria-label="Shared room" title="Shared room — invite people with a link">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
-              <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
-            </svg>
-          </button>
-          <button id="mode-classic" role="tab" aria-selected="false"
-                  aria-label="Manual" title="Manual — type 2–5 addresses yourself">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
-            </svg>
-          </button>
-        </div>
-        <button id="search-btn" class="icon-btn" aria-label="Enter an address" title="Type an address">
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
-               stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/>
-          </svg>
+        <ol class="progress" aria-hidden="true"><li></li><li></li><li></li></ol>
+        <button id="share-btn" class="chip" type="button" aria-haspopup="true" aria-expanded="false" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
+          Invite
         </button>
-        <button id="locate-btn" class="icon-btn" aria-label="Use my location" title="Use my location">
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
-               stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <circle cx="12" cy="12" r="8"/>
-            <line x1="12" y1="1" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="23"/>
-            <line x1="1" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="23" y2="12"/>
-          </svg>
-        </button>
-        <button id="find-mini" class="icon-btn" aria-label="Find the middle" title="Find the middle" disabled>
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
-               stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <circle cx="9" cy="12" r="7"/><circle cx="15" cy="12" r="7"/>
-          </svg>
-        </button>
-        <button id="share-btn" class="icon-btn" aria-label="Share room link" title="Share room link"
-                aria-haspopup="true" aria-expanded="false">
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
-               stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7"/>
-            <polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/>
-          </svg>
-        </button>
-        <button id="help-toggle" class="icon-btn" aria-label="How to use" aria-expanded="false">?</button>
       </div>
-      <p class="tagline">the fair place to meet, measured by transit time</p>
-      <!-- Fallback menu when the browser has no native share sheet. -->
+      <!-- Fallback when the browser has no native share sheet. -->
       <div class="share-menu" id="share-menu" hidden>
         <a id="share-whatsapp" target="_blank" rel="noopener">WhatsApp</a>
         <a id="share-email">Email</a>
         <button id="share-copy" type="button">Copy link</button>
       </div>
-      <div class="help-popover" id="help-popover" hidden>
-        <ul id="help-room">
-          <li>This page is a <strong>room</strong> — hit the <strong>share button</strong> (the arrow) to send or copy the link. Everyone who opens it joins this map with their own pin and a randomly generated name.</li>
-          <li>Set where you're coming from: tap the <strong>magnifying glass</strong> to type an address, tap the map, drag your pin, or hit the <strong>crosshair</strong> to use your current location. If your browser says location is blocked, allow it from the address bar's ⓘ/padlock icon (Site settings → Location) and reload.</li>
-          <li>Once two or more people have pins, hit <strong>find the middle</strong> (the overlapping circles) — everyone sees the same results. Tap a numbered pin for each person's route and times.</li>
-          <li>The tabs at the top: <strong>the people icon</strong> is this shared room; <strong>the pin icon</strong> is manual mode — type 2–5 addresses yourself, no sharing involved.</li>
-          <li><strong>Options</strong> changes the max travel time and departure time.</li>
-        </ul>
-        <ul id="help-classic" hidden>
-          <li><strong>Manual mode:</strong> enter 2–5 starting points yourself — tap the <strong>magnifying glass</strong> or the <strong>crosshair</strong> to fill the next empty address, or tap the map. <strong>+ Add another address</strong> for more people; drag pins to adjust.</li>
-          <li>Hit <strong>find the middle</strong> (the overlapping circles), then tap a numbered pin for each person's route and times.</li>
-          <li>The tabs at the top: <strong>the people icon</strong> switches back to the shared room (invite friends with a link); <strong>the pin icon</strong> is this manual mode.</li>
-          <li><strong>Options</strong> changes the max travel time and departure time.</li>
-        </ul>
-      </div>
     </header>
 
-    <!-- Landscape phones only: a dedicated collapse/expand handle centred
-         on the card's actual height (see styles/main.css and main.js). -->
-    <button id="side-toggle" aria-label="Expand or collapse the panel" aria-expanded="false"></button>
+    <!-- Landscape phones only: collapse/expand handle on the card's edge. -->
+    <button id="side-toggle" type="button" aria-label="Expand or collapse" aria-expanded="true"></button>
 
-    <section id="room-ui">
-      <div class="inputs">
-        <div class="field">
-          <span class="pin-dot" id="pin-dot-you"></span>
-          <input type="text" id="input-you" placeholder="Your starting point" autocomplete="off" />
-          <div class="suggestions" id="suggestions-you"></div>
-        </div>
+    <!-- Step 1: where are you? -->
+    <section class="step" id="step-start">
+      <div class="step-head peek">
+        <h2>Where are you starting?</h2>
+        <button id="back-btn" class="chip" type="button" hidden>Back</button>
       </div>
-      <ul class="participants" id="participants"></ul>
+      <button id="locate-btn" class="primary peek" type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><polygon points="3 11 22 2 13 21 11 13 3 11"/></svg>
+        <span id="locate-label">Use my location</span>
+      </button>
+      <div class="field search">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/></svg>
+        <input type="text" id="input-you" placeholder="or search an address" autocomplete="off"
+               aria-label="Your starting address" enterkeyhint="search" />
+        <div class="suggestions" id="suggestions-you"></div>
+      </div>
+      <p class="hint">or tap the map</p>
     </section>
 
-    <section id="classic-ui" hidden>
-      <div class="inputs" id="manual-fields"></div>
-      <button id="add-address" class="add-address" type="button">+ Add another address</button>
+    <!-- Step 2: who else? -->
+    <section class="step" id="step-people" hidden>
+      <h2 class="peek">Who are you meeting?</h2>
+      <ul class="people" id="people"></ul>
+      <div class="field search" id="add-field" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/></svg>
+        <input type="text" id="input-add" placeholder="Their address — or tap the map" autocomplete="off"
+               aria-label="Another starting address" enterkeyhint="search" />
+        <button id="add-cancel" class="field-x" type="button" aria-label="Cancel">×</button>
+        <div class="suggestions" id="suggestions-add"></div>
+      </div>
+      <div class="pair" id="add-actions">
+        <button id="invite-btn" class="secondary" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
+          Invite
+        </button>
+        <button id="add-btn" class="secondary" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Add address
+        </button>
+      </div>
+      <button id="find" class="primary peek" type="button" disabled>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="12" r="7"/><circle cx="15" cy="12" r="7"/></svg>
+        Find the middle
+      </button>
+      <div class="options">
+        <button id="budget-chip" class="chip" type="button" aria-label="Maximum travel time each">≤ 60 min</button>
+        <!-- The real input sits invisibly over the chip, so tapping it opens
+             the native date/time picker. -->
+        <span class="chip date-chip">
+          <span id="depart-label">Leave now</span>
+          <input type="datetime-local" id="depart" aria-label="Departure time" />
+        </span>
+      </div>
     </section>
 
-    <div class="controls">
-      <details class="advanced">
-        <summary>Options</summary>
-        <label class="control-label" for="budget">Max travel time each: <strong id="budget-label">60 min</strong></label>
-        <input type="range" id="budget" min="20" max="90" step="5" value="60" />
-        <label class="control-label" for="depart">Leave at</label>
-        <input type="datetime-local" id="depart" />
-      </details>
-    </div>
+    <!-- Step 3: the results. -->
+    <section class="step" id="step-results" hidden>
+      <div class="results-head peek">
+        <h2>Meet here</h2>
+        <button id="edit-btn" class="chip" type="button">Edit</button>
+      </div>
+      <ol class="results" id="results"></ol>
+    </section>
 
-    <button id="find" disabled>Find the middle</button>
-    <p class="status" id="status"></p>
+    <p class="status" id="status" role="status" aria-live="polite"></p>
 
     <footer class="credits">
-      Routing <a href="https://transitous.org" target="_blank" rel="noopener">Transitous / MOTIS</a>
-      · Data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors
+      Routing <a href="https://transitous.org" target="_blank" rel="noopener">Transitous</a>
+      · © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>
     </footer>
   </aside>
 
