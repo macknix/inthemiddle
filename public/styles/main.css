@@ -685,6 +685,15 @@ button { font: inherit; }
   .title-row h1 { font-size: 16px; }
   .step h2 { font-size: 20px; }
 
+  /* Drag surfaces: the browser mustn't scroll/zoom while the sheet is
+   * being dragged (see main.js). */
+  .panel-header,
+  #side-toggle,
+  .panel.collapsed { touch-action: none; }
+
+  /* Off-screen while a search runs (main.js hideSheet). */
+  .panel.searching { pointer-events: none; }
+
   .panel.collapsed .title-row { display: none; }
   .panel.collapsed .step > :not(.peek):not(.results),
   .panel.collapsed .results > li:not(.peek) { display: none; }
@@ -705,6 +714,7 @@ button { font: inherit; }
     padding: 0 16px calc(16px + env(safe-area-inset-bottom));
     box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.55);
   }
+  .panel.searching { transform: translateY(calc(100% + 40px)) !important; }
 
   /* The whole strip above the content is the drag-handle target. */
   .grabber {
@@ -792,5 +802,8 @@ button { font: inherit; }
     overflow: hidden;
   }
   .panel.collapsed > :not(#side-toggle) { display: none; }
+
+  .panel.searching { transform: translateX(calc(-100% - 40px)) !important; }
+  .panel.collapsed.searching { transform: translate(calc(-100% - 40px), -50%) !important; }
   .panel.collapsed #side-toggle { left: 2px; }
 }

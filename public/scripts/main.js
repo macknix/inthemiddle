@@ -154,7 +154,7 @@ function setPanelCollapsed(collapsed) {
 [grabber, sideToggle].forEach((b) =>
   b.addEventListener("click", (e) => {
     e.stopPropagation();
-    setPanelCollapsed(!panel.classList.contains("collapsed"));
+    toggleSheet();
   })
 );
 
@@ -162,8 +162,167 @@ function setPanelCollapsed(collapsed) {
 panel.addEventListener("click", (e) => {
   if (!panel.classList.contains("collapsed")) return;
   if (e.target.closest("button, a, input")) return;
-  setPanelCollapsed(false);
+  toggleSheet();
 });
+
+/* ---------- dragging the sheet (phones) ----------
+ *
+ * Portrait: drag the sheet down to collapse, up to expand. Landscape: swipe
+ * the left dock left/right. The sheet tracks the finger, then snaps: a
+ * flick decides by direction, a slow drag by whether it passed halfway.
+ *
+ * Throughout a drag (and the snap after it) the panel is in its EXPANDED
+ * layout, shifted by `offset` px towards collapsed (0 = fully open,
+ * travel = exactly where the collapsed sheet's edge sits). The collapsed
+ * layout is only swapped in once the snap lands there, so the edge never
+ * jumps. Programmatic collapses (e.g. on results) stay instant so map
+ * fitting can measure the final layout straight away.
+ */
+
+const isLandscapePhone = () => window.matchMedia("(max-height: 500px) and (pointer: coarse)").matches;
+const sheetTransform = (offset) =>
+  isLandscapePhone() ? `translateX(${-offset}px)` : `translateY(${offset}px)`;
+const SNAP_TRANSITION = "transform 0.32s cubic-bezier(0.2, 0.8, 0.2, 1)";
+let suppressClickUntil = 0;
+let snapTimer = null;
+
+/* How far the edge moves between expanded and collapsed, in px. */
+function sheetTravel() {
+  const was = panel.classList.contains("collapsed");
+  const transform = panel.style.transform;
+  panel.style.transform = "";
+  panel.classList.add("collapsed");
+  const c = panel.getBoundingClientRect();
+  panel.classList.remove("collapsed");
+  const e = panel.getBoundingClientRect();
+  panel.classList.toggle("collapsed", was);
+  panel.style.transform = transform;
+  return Math.max(isLandscapePhone() ? e.width - c.width : e.height - c.height, 0);
+}
+
+function snapSheet(collapse, from, travel) {
+  clearTimeout(snapTimer);
+  setPanelCollapsed(false);
+  panel.style.transition = "none";
+  panel.style.transform = sheetTransform(from);
+  panel.getBoundingClientRect(); // commit the start position before animating
+  panel.style.transition = SNAP_TRANSITION;
+  panel.style.transform = sheetTransform(collapse ? travel : 0);
+  const finish = () => {
+    clearTimeout(snapTimer);
+    panel.removeEventListener("transitionend", finish);
+    panel.style.transition = "";
+    panel.style.transform = "";
+    if (collapse) setPanelCollapsed(true);
+  };
+  panel.addEventListener("transitionend", finish);
+  snapTimer = setTimeout(finish, 450); // in case transitionend never fires
+}
+
+/* Slide the whole panel off-screen (phones) while a search runs, so only the
+ * map and its animation show; slide it back when there's something to say. */
+let hideTimer = null;
+function hideSheet(hidden) {
+  if (panel.classList.contains("searching") === hidden) return;
+  if (hidden && !isMobile()) return;
+  clearTimeout(hideTimer);
+  panel.style.transition = SNAP_TRANSITION;
+  panel.classList.toggle("searching", hidden);
+  hideTimer = setTimeout(() => (panel.style.transition = ""), 450);
+}
+
+function toggleSheet() {
+  const collapsed = panel.classList.contains("collapsed");
+  if (!isMobile()) return setPanelCollapsed(!collapsed);
+  const travel = sheetTravel();
+  snapSheet(!collapsed, collapsed ? travel : 0, travel);
+}
+
+let drag = null;
+
+panel.addEventListener("pointerdown", (e) => {
+  if (!isMobile() || e.button > 0) return;
+  const collapsed = panel.classList.contains("collapsed");
+  // Expanded: drag from the header strip (the content scrolls and has
+  // inputs). Collapsed: anywhere on the sheet.
+  if (!collapsed && !e.target.closest(".panel-header, #side-toggle")) return;
+  if (e.target.closest("input, .share-menu")) return;
+  drag = { id: e.pointerId, x: e.clientX, y: e.clientY, collapsed, started: false };
+});
+
+window.addEventListener(
+  "pointermove",
+  (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    const land = isLandscapePhone();
+    // Positive = towards collapsed (down in portrait, left in landscape).
+    const delta = land ? drag.x - e.clientX : e.clientY - drag.y;
+    const cross = land ? e.clientY - drag.y : e.clientX - drag.x;
+    if (!drag.started) {
+      if (Math.abs(delta) < 8) return; // still a tap
+      if (Math.abs(cross) > Math.abs(delta)) {
+        drag = null; // moving the other way: not ours
+        return;
+      }
+      drag.started = true;
+      drag.travel = sheetTravel();
+      drag.base = drag.collapsed ? drag.travel : 0;
+      drag.lastDelta = delta;
+      drag.lastT = e.timeStamp;
+      drag.v = 0;
+      clearTimeout(snapTimer);
+      setPanelCollapsed(false);
+      panel.style.transition = "none";
+      try {
+        panel.setPointerCapture(drag.id);
+      } catch {}
+    }
+    let offset = drag.base + delta;
+    // Rubber-band past either end instead of a hard stop.
+    if (offset < 0) offset *= 0.25;
+    else if (offset > drag.travel) offset = drag.travel + (offset - drag.travel) * 0.25;
+    drag.offset = offset;
+    const dt = e.timeStamp - drag.lastT;
+    if (dt > 0) {
+      // Smoothed velocity (px/ms), so one jittery sample can't decide a flick.
+      drag.v = 0.7 * ((delta - drag.lastDelta) / dt) + 0.3 * drag.v;
+      drag.lastDelta = delta;
+      drag.lastT = e.timeStamp;
+    }
+    panel.style.transform = sheetTransform(offset);
+    e.preventDefault();
+  },
+  { passive: false }
+);
+
+function endDrag(e) {
+  if (!drag || e.pointerId !== drag.id) return;
+  const d = drag;
+  drag = null;
+  if (!d.started) return;
+  suppressClickUntil = performance.now() + 400; // the release isn't a tap
+  // A flick decides by its direction. A slow drag commits once it's a
+  // third of the way over, measured from where it started.
+  const moved = d.offset - d.base;
+  const collapse =
+    Math.abs(d.v) > 0.3 ? d.v > 0 : Math.abs(moved) > d.travel / 3 ? moved > 0 : d.collapsed;
+  snapSheet(collapse, d.offset, d.travel);
+}
+window.addEventListener("pointerup", endDrag);
+window.addEventListener("pointercancel", endDrag);
+
+// Swallow the click that follows a drag, so it doesn't also toggle the sheet
+// or press whichever button the finger happened to start on.
+panel.addEventListener(
+  "click",
+  (e) => {
+    if (performance.now() < suppressClickUntil) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
+  },
+  true
+);
 
 function setView(view) {
   if (view !== state.view) {
@@ -884,6 +1043,7 @@ async function runSearch() {
   findBtn.classList.add("loading");
   findBtn.disabled = true;
   setStatus("Checking every route…");
+  hideSheet(true); // before the animation, so the map frames for no panel
   const anim = startSearchAnimation();
   try {
     const data = await api(`/api/rooms/${state.id}/meet`, {
@@ -895,8 +1055,13 @@ async function runSearch() {
     });
     state.resultsVersion = data.resultsVersion;
     setStatus("");
+    // Back in first, so renderResults collapses it and frames the map
+    // around where the sheet will land.
+    hideSheet(false);
     renderResults(decorateResults(data));
   } catch (err) {
+    hideSheet(false);
+    setPanelCollapsed(false); // errors need the full panel
     setStatus(err.message ?? "Could not reach the server.", true);
   } finally {
     anim.stop();
@@ -926,11 +1091,17 @@ function popupHtml(c, rank, results, legsHtml) {
 /* Leaves room for the panel when fitting/panning the map. */
 function mapPadding() {
   if (!isMobile()) return { paddingTopLeft: [400, 60], paddingBottomRight: [60, 60] };
-  const r = panel.getBoundingClientRect();
-  if (r.top > window.innerHeight / 3) {
-    return { paddingTopLeft: [30, 70], paddingBottomRight: [30, window.innerHeight - r.top + 20] };
+  if (panel.classList.contains("searching")) {
+    return { paddingTopLeft: [40, 40], paddingBottomRight: [40, 40] };
   }
-  return { paddingTopLeft: [r.right + 20, 30], paddingBottomRight: [30, 30] };
+  // offset* metrics ignore transforms, so this is where the panel will
+  // settle even while it's mid-slide.
+  const top = panel.offsetTop;
+  const right = panel.offsetLeft + panel.offsetWidth;
+  if (top > window.innerHeight / 3) {
+    return { paddingTopLeft: [30, 70], paddingBottomRight: [30, window.innerHeight - top + 20] };
+  }
+  return { paddingTopLeft: [right + 20, 30], paddingBottomRight: [30, 30] };
 }
 
 function renderResults(results) {
