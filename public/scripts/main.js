@@ -358,24 +358,23 @@ function myLocated() {
 
 /* ---------- geolocation ----------
  *
- * Why the prompt never appeared before: the page only ever asked from the
- * small crosshair button, so first-time visitors saw no prompt at all. Now:
- *  - On the first visit (per browser) we ask straight away. Every browser
- *    shows its prompt for that — no tap needed.
- *  - The big "Use my location" button asks on every tap after that.
- *  - Already-granted visitors are located silently on every visit.
- * We don't re-ask on *every* load: dismissing Chrome's prompt three times
- * auto-blocks the site for a week, which would break the button too.
+ * We only ever ask for location from a tap on "Use my location". Mobile
+ * browsers treat a request made on page load (no user gesture) as
+ * unsolicited: Chrome on Android blocks it or downgrades it to a "quiet"
+ * address-bar icon, counts the auto-dismissal towards its week-long embargo,
+ * and — because that request stays pending — a later tap joins it instead of
+ * showing a real prompt. So on load we only locate visitors who have
+ * already granted permission, which needs no prompt.
  *
- * Chrome sometimes shows only a small icon in the address bar instead of a
- * popup ("quiet" prompt). getCurrentPosition then just hangs — its timeout
- * doesn't start until permission is given — so a watchdog points people at
- * that icon instead of leaving a spinner running forever.
+ * If Chrome still shows a quiet prompt, getCurrentPosition just hangs (its
+ * timeout doesn't start until permission is given), so a watchdog points
+ * people at the address-bar icon instead of leaving a spinner running.
  */
 
 const IN_APP_BROWSER = /FBAN|FBAV|Instagram|Line\/|Snapchat|; wv\)/i.test(navigator.userAgent);
 let geoState = "prompt";
 let geoWatchdog = null;
+let geoPending = false;
 const locateBtn = $("locate-btn");
 const locateLabel = $("locate-label");
 
@@ -418,6 +417,8 @@ function requestLocation({ auto = false } = {}) {
     if (!auto) setStatus("Location isn't available here — search or tap the map.", true);
     return;
   }
+  if (geoPending) return; // a second call would join the pending one, not re-prompt
+  geoPending = true;
   updateLocateButton(true);
   if (!auto) setStatus("");
   clearTimeout(geoWatchdog);
@@ -426,6 +427,7 @@ function requestLocation({ auto = false } = {}) {
   }, 6000);
 
   const done = () => {
+    geoPending = false;
     clearTimeout(geoWatchdog);
     updateLocateButton(false);
   };
@@ -459,23 +461,16 @@ async function autoLocate() {
   if (!navigator.geolocation) return;
   geoState = await geoPermissionState();
   updateLocateButton(false);
-  if (geoState === "granted") return requestLocation({ auto: true });
-  if (geoState === "denied" || IN_APP_BROWSER) return;
-  let askedBefore = false;
-  try {
-    askedBefore = localStorage.getItem("itm-geo-asked") === "1";
-    localStorage.setItem("itm-geo-asked", "1");
-  } catch {}
-  if (!askedBefore) requestLocation({ auto: true });
+  // Only when no prompt is needed — asking without a tap gets blocked on phones.
+  if (geoState === "granted") requestLocation({ auto: true });
 }
 
 locateBtn.addEventListener("click", (e) => {
   e.stopPropagation();
-  if (geoState === "denied") {
-    // Chrome won't prompt again once blocked — say how to undo it, but try
-    // anyway in case it was re-allowed without a reload.
-    setStatus(blockedHelp(), true);
-  }
+  // Call straight from the tap (no await first) so the browser counts it as
+  // a user gesture. Even if we think it's "denied", try anyway: Safari resets
+  // per session and the user may have re-allowed it; the error path explains
+  // how to unblock if it really is blocked.
   requestLocation();
 });
 
@@ -1272,5 +1267,5 @@ function decodePolyline(encoded, precision) {
 /* ---------- boot ---------- */
 
 render();
-autoLocate(); // in parallel with the room join, so the prompt shows at once
+autoLocate(); // silent: only locates visitors who already granted permission
 initRoom();
